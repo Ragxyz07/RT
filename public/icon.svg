@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fdf4f7"/>
+      <stop offset="50%" stop-color="#f5e6ee"/>
+      <stop offset="100%" stop-color="#eed8e4"/>
+    </linearGradient>
+    <linearGradient id="heartGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e27c9d"/>
+      <stop offset="100%" stop-color="#9a527c"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a472bb"/>
+      <stop offset="100%" stop-color="#4a2c22"/>
+    </linearGradient>
+  </defs>
+  <!-- Background with subtle warm border -->
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)"/>
+  <rect x="12" y="12" width="488" height="488" rx="116" fill="none" stroke="#eed3de" stroke-width="4"/>
+
+  <!-- Romantic Interlocking Hearts Motif -->
+  <g transform="translate(256, 215) scale(0.95)">
+    <!-- Back Heart (Lilac) -->
+    <path d="M 30,-50 C 70,-100 140,-70 140,-10 C 140,50 60,110 0,160 C -60,110 -140,50 -140,-10 C -140,-70 -70,-100 -30,-50 Z" 
+          fill="#cbb3e8" opacity="0.45" transform="rotate(12) scale(0.9)"/>
+    <!-- Main Heart (Rose) -->
+    <path d="M 0,-65 C 50,-125 130,-90 130,-20 C 130,50 45,115 0,160 C -45,115 -130,50 -130,-20 C -130,-90 -50,-125 0,-65 Z" 
+          fill="url(#heartGrad)"/>
+    <!-- Inner Sparkle -->
+    <circle cx="50" cy="-35" r="14" fill="#ffffff" opacity="0.6"/>
+    <circle cx="70" cy="-15" r="6" fill="#ffffff" opacity="0.7"/>
+  </g>
+
+  <!-- AKRA Wordmark -->
+  <text x="256" y="420" 
+        font-family="'Playfair Display', Georgia, serif" 
+        font-size="64" 
+        font-weight="700" 
+        letter-spacing="10" 
+        fill="#3c2016" 
+        text-anchor="middle">AKRA</text>
+  
+  <text x="256" y="455" 
+        font-family="'Plus Jakarta Sans', sans-serif" 
+        font-size="17" 
+        font-weight="500" 
+        letter-spacing="4" 
+        fill="#7f5d52" 
+        text-anchor="middle">A LITTLE PLACE FOR US</text>
+</svg>

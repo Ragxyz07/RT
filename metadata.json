@@ -1,0 +1,12 @@
+{
+  "name": "AKRA",
+  "description": "AKRA — A little world for two. A cinematic 3D private digital world for a couple in a long-distance relationship.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

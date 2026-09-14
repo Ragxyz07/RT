@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "AKRA — Private Space",
+  "short_name": "AKRA",
+  "description": "A private digital space exclusively for two people in a long-distance relationship.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fcf8f6",
+  "theme_color": "#fcf8f6",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
