@@ -96,19 +96,99 @@ export const SettingsView: React.FC = () => {
   const [croppingImage, setCroppingImage] = useState<string | null>(null);
   const [isSavingCropped, setIsSavingCropped] = useState(false);
 
-  // Handle DP selection from file or camera - opens crop/adjust modal
-  const handleDpSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle DP selection from file or camera - saves directly without forcing a crop popup
+  const handleDpSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Please select an image file for your DP.');
+      showToast('Invalid File', 'Please select an image file for your DP.', 'info');
       return;
     }
 
-    const objectUrl = URL.createObjectURL(file);
-    setCroppingImage(objectUrl);
-    e.target.value = '';
+    try {
+      setIsUploadingDp(true);
+      showToast('Saving DP...', 'Processing your display picture...', 'info');
+
+      const reader = new FileReader();
+      reader.onload = async (readerEvt) => {
+        const rawDataUrl = readerEvt.target?.result as string;
+        if (!rawDataUrl) {
+          setIsUploadingDp(false);
+          return;
+        }
+
+        // Optimize photo to high-res avatar size (max 800px) so phone photos upload fast & reliably
+        const img = new Image();
+        img.onload = async () => {
+          const maxDim = 800;
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, w, h);
+          }
+          const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.90);
+
+          canvas.toBlob(async (blob) => {
+            let finalUrl = optimizedDataUrl;
+            if (blob) {
+              try {
+                const filename = `avatar-${currentUser.id}-${Date.now()}.jpg`;
+                const fileToUpload = new File([blob], filename, { type: 'image/jpeg' });
+                const uploadRes = await uploadToSupabaseStorage(fileToUpload, {
+                  bucket: 'akra-media',
+                  folder: 'avatars',
+                  filename,
+                  caption: `${currentUser.name} profile photo`,
+                  category: 'avatars',
+                });
+                if (uploadRes?.url) {
+                  finalUrl = uploadRes.url;
+                }
+              } catch (uploadErr) {
+                console.warn('Supabase storage upload error, saving data URL directly:', uploadErr);
+              }
+            }
+
+            await updateCurrentUserProfile({ avatar: finalUrl });
+            setDpPreview(null);
+            setIsUploadingDp(false);
+            showToast('DP Saved ❤️', 'Your display picture has been saved permanently!', 'love');
+          }, 'image/jpeg', 0.90);
+        };
+
+        img.onerror = async () => {
+          // Fallback if image tag cannot parse
+          await updateCurrentUserProfile({ avatar: rawDataUrl });
+          setDpPreview(null);
+          setIsUploadingDp(false);
+          showToast('DP Saved ❤️', 'Your display picture has been saved permanently!', 'love');
+        };
+
+        img.src = rawDataUrl;
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('DP upload error:', err);
+      setIsUploadingDp(false);
+      showToast('Upload Failed', 'Could not save display picture.', 'info');
+    } finally {
+      e.target.value = '';
+    }
   };
 
   // Crop & save avatar directly to Supabase storage + user profile
