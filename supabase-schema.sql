@@ -1,30 +1,14 @@
 -- ==============================================================================
 -- AKRA - Supabase PostgreSQL Schema & Row Level Security (RLS)
 -- Dedicated to Ragul (Mama) & Akshya (Akshu)
+-- Enforces real Supabase Auth (auth.uid()) and couple membership isolation
 -- ==============================================================================
 
 -- 1. Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- 2. USERS TABLE
-CREATE TABLE IF NOT EXISTS public.users (
-  id BIGSERIAL PRIMARY KEY,
-  uid TEXT UNIQUE NOT NULL, -- e.g. 'ragul_mama', 'akshu_akshya' or Supabase auth.users.id
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT,
-  name TEXT NOT NULL,
-  nickname TEXT NOT NULL,
-  avatar TEXT,
-  city TEXT NOT NULL DEFAULT 'Puducherry',
-  bio TEXT,
-  partner_id TEXT,
-  is_online BOOLEAN DEFAULT false,
-  last_seen TIMESTAMPTZ DEFAULT NOW(),
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 3. COUPLES TABLE
+-- 2. COUPLES TABLE
 CREATE TABLE IF NOT EXISTS public.couples (
   id TEXT PRIMARY KEY, -- e.g. 'couple_akra_1'
   name TEXT NOT NULL DEFAULT 'AKRA',
@@ -40,16 +24,60 @@ CREATE TABLE IF NOT EXISTS public.couples (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 3. USERS TABLE (Linked to Supabase Auth auth.users via UUID)
+CREATE TABLE IF NOT EXISTS public.users (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  uid TEXT UNIQUE,
+  email TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  nickname TEXT NOT NULL,
+  avatar TEXT,
+  city TEXT NOT NULL DEFAULT 'Puducherry',
+  bio TEXT,
+  partner_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  is_online BOOLEAN DEFAULT false,
+  last_seen TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 4. COUPLE MEMBERS TABLE
 CREATE TABLE IF NOT EXISTS public.couple_members (
   id BIGSERIAL PRIMARY KEY,
   couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   role TEXT DEFAULT 'partner',
-  joined_at TIMESTAMPTZ DEFAULT NOW()
+  joined_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (couple_id, user_id)
 );
 
--- 5. MESSAGES TABLE
+-- 5. Helper function: Check if authenticated user belongs to couple
+CREATE OR REPLACE FUNCTION public.is_couple_member(check_couple_id TEXT)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.couple_members
+    WHERE couple_id = check_couple_id
+      AND user_id = auth.uid()
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- 6. Helper function: Get couple_id for currently authenticated user
+CREATE OR REPLACE FUNCTION public.get_auth_couple_id()
+RETURNS TEXT AS $$
+DECLARE
+  res_couple_id TEXT;
+BEGIN
+  SELECT couple_id INTO res_couple_id
+  FROM public.couple_members
+  WHERE user_id = auth.uid()
+  LIMIT 1;
+  RETURN res_couple_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- 7. MESSAGES TABLE
 CREATE TABLE IF NOT EXISTS public.messages (
   id TEXT PRIMARY KEY,
   couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
@@ -57,7 +85,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
   sender_name TEXT NOT NULL,
   text TEXT,
   image_url TEXT,
-  attachment_type TEXT DEFAULT 'none', -- 'none' | 'image' | 'voice' | 'location'
+  attachment_type TEXT DEFAULT 'none',
   audio_url TEXT,
   reaction TEXT,
   is_read BOOLEAN DEFAULT false,
@@ -66,7 +94,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 6. MEDIA TABLE (Supabase Storage references)
+-- 8. MEDIA TABLE (Supabase Storage references)
 CREATE TABLE IF NOT EXISTS public.media (
   id TEXT PRIMARY KEY,
   couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
@@ -80,7 +108,7 @@ CREATE TABLE IF NOT EXISTS public.media (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 7. VAULT ITEMS TABLE (Private encrypted storage)
+-- 9. VAULT ITEMS TABLE (Private encrypted storage)
 CREATE TABLE IF NOT EXISTS public.vault_items (
   id TEXT PRIMARY KEY,
   couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
@@ -96,118 +124,95 @@ CREATE TABLE IF NOT EXISTS public.vault_items (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8. MEMORIES TABLE
+-- 10. MEMORIES TABLE
 CREATE TABLE IF NOT EXISTS public.memories (
   id TEXT PRIMARY KEY,
   couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
-  creator_id TEXT NOT NULL,
-  uploaded_by_name TEXT NOT NULL,
   title TEXT NOT NULL,
-  description TEXT,
   date TEXT NOT NULL,
-  year INTEGER DEFAULT 2024,
   location TEXT,
+  category TEXT DEFAULT 'special',
   image_url TEXT NOT NULL,
-  tags TEXT, -- JSON or comma-separated string
-  photo_type TEXT DEFAULT 'digital',
+  caption TEXT,
   likes INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  liked_by_you BOOLEAN DEFAULT false,
+  comments JSONB DEFAULT '[]'::jsonb,
+  creator_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 9. LETTERS TABLE
+-- 11. LETTERS TABLE
 CREATE TABLE IF NOT EXISTS public.letters (
   id TEXT PRIMARY KEY,
   couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
   sender_id TEXT NOT NULL,
-  author_name TEXT NOT NULL,
-  recipient_id TEXT NOT NULL,
+  sender_name TEXT NOT NULL,
   title TEXT NOT NULL,
   content TEXT NOT NULL,
-  stamp TEXT DEFAULT 'rose',
-  wax_seal TEXT DEFAULT 'heart',
-  paper_style TEXT DEFAULT 'vintage',
-  scheduled_for TEXT,
-  is_sent BOOLEAN DEFAULT true,
+  sealed_until TIMESTAMPTZ,
   is_opened BOOLEAN DEFAULT false,
-  opened_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  wax_color TEXT DEFAULT 'rose',
+  paper_style TEXT DEFAULT 'classic',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  opened_at TIMESTAMPTZ
 );
 
--- 10. TIMELINE EVENTS TABLE
+-- 12. TIMELINE EVENTS TABLE
 CREATE TABLE IF NOT EXISTS public.timeline_events (
   id TEXT PRIMARY KEY,
   couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
-  created_by TEXT NOT NULL,
   title TEXT NOT NULL,
   date TEXT NOT NULL,
   description TEXT,
-  category TEXT DEFAULT 'Milestone',
+  icon TEXT DEFAULT 'Heart',
   image_url TEXT,
-  location TEXT,
-  icon TEXT DEFAULT 'heart',
+  category TEXT DEFAULT 'milestone',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 11. BUCKET LIST ITEMS TABLE
+-- 13. BUCKET LIST ITEMS TABLE
 CREATE TABLE IF NOT EXISTS public.bucket_list_items (
   id TEXT PRIMARY KEY,
   couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
-  created_by TEXT NOT NULL,
-  suggested_by_name TEXT NOT NULL,
   title TEXT NOT NULL,
-  category TEXT DEFAULT 'travel',
   target_date TEXT,
   completed BOOLEAN DEFAULT false,
-  completed_at TIMESTAMPTZ,
+  category TEXT DEFAULT 'travel',
+  location TEXT,
   notes TEXT,
+  image_url TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 12. LOCATIONS TABLE (Real-time GPS coordinates per user)
+-- 14. LOCATIONS TABLE (Realtime GPS Sync)
 CREATE TABLE IF NOT EXISTS public.locations (
   user_id TEXT PRIMARY KEY,
-  couple_id TEXT REFERENCES public.couples(id) ON DELETE CASCADE,
+  couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
   lat DOUBLE PRECISION NOT NULL,
   lng DOUBLE PRECISION NOT NULL,
   latitude TEXT,
   longitude TEXT,
-  accuracy DOUBLE PRECISION,
-  address TEXT,
-  city TEXT,
+  accuracy DOUBLE PRECISION DEFAULT 10,
+  city TEXT DEFAULT 'Puducherry',
   is_sharing BOOLEAN DEFAULT true,
   updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
--- Ensure columns exist if table was already created
-ALTER TABLE public.locations ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
-ALTER TABLE public.locations ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
-ALTER TABLE public.locations ADD COLUMN IF NOT EXISTS city TEXT;
-ALTER TABLE public.locations ADD COLUMN IF NOT EXISTS accuracy DOUBLE PRECISION;
-
--- 13. MOVIE SESSIONS TABLE (Real-time movie sync)
+-- 15. MOVIE SESSIONS TABLE
 CREATE TABLE IF NOT EXISTS public.movie_sessions (
-  id TEXT PRIMARY KEY, -- couple_id
-  couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
-  video_url TEXT,
-  video_title TEXT,
-  is_playing BOOLEAN DEFAULT false,
-  "current_time" TEXT DEFAULT '0',
-  playback_time DOUBLE PRECISION DEFAULT 0,
-  host_id TEXT,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 14. SESSIONS TABLE
-CREATE TABLE IF NOT EXISTS public.sessions (
   id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  token TEXT UNIQUE NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  couple_id TEXT NOT NULL REFERENCES public.couples(id) ON DELETE CASCADE,
+  movie_id TEXT NOT NULL,
+  is_playing BOOLEAN DEFAULT false,
+  current_time DOUBLE PRECISION DEFAULT 0,
+  updated_by TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ==============================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
+-- Enforce auth.uid() validation against couple membership
 -- ==============================================================================
 
 -- Enable RLS on all tables
@@ -223,56 +228,165 @@ ALTER TABLE public.timeline_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bucket_list_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.movie_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
 
--- Allow anon/authenticated read and write with couple-level protection
--- (Note: Service role bypasses RLS automatically; anon clients have full couple read/write access)
-DO $$
-BEGIN
-  -- Users
-  DROP POLICY IF EXISTS "Public and auth access to users" ON public.users;
-  CREATE POLICY "Public and auth access to users" ON public.users FOR ALL USING (true) WITH CHECK (true);
+-- 1. USERS POLICIES
+DROP POLICY IF EXISTS "Users can read couple partner profile" ON public.users;
+CREATE POLICY "Users can read couple partner profile" ON public.users
+  FOR SELECT TO authenticated
+  USING (
+    id = auth.uid() OR
+    id IN (
+      SELECT cm2.user_id FROM public.couple_members cm1
+      JOIN public.couple_members cm2 ON cm1.couple_id = cm2.couple_id
+      WHERE cm1.user_id = auth.uid()
+    )
+  );
 
-  -- Couples
-  DROP POLICY IF EXISTS "Public and auth access to couples" ON public.couples;
-  CREATE POLICY "Public and auth access to couples" ON public.couples FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.users;
+CREATE POLICY "Users can update their own profile" ON public.users
+  FOR UPDATE TO authenticated
+  USING (id = auth.uid())
+  WITH CHECK (id = auth.uid());
 
-  -- Messages
-  DROP POLICY IF EXISTS "Couple members can access messages" ON public.messages;
-  CREATE POLICY "Couple members can access messages" ON public.messages FOR ALL USING (true) WITH CHECK (true);
+-- 2. COUPLES POLICIES
+DROP POLICY IF EXISTS "Couple members can view couple" ON public.couples;
+CREATE POLICY "Couple members can view couple" ON public.couples
+  FOR SELECT TO authenticated
+  USING (public.is_couple_member(id));
 
-  -- Memories
-  DROP POLICY IF EXISTS "Couple members can access memories" ON public.memories;
-  CREATE POLICY "Couple members can access memories" ON public.memories FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Couple members can update couple space" ON public.couples;
+CREATE POLICY "Couple members can update couple space" ON public.couples
+  FOR UPDATE TO authenticated
+  USING (public.is_couple_member(id))
+  WITH CHECK (public.is_couple_member(id));
 
-  -- Letters
-  DROP POLICY IF EXISTS "Couple members can access letters" ON public.letters;
-  CREATE POLICY "Couple members can access letters" ON public.letters FOR ALL USING (true) WITH CHECK (true);
+-- 3. COUPLE MEMBERS POLICIES
+DROP POLICY IF EXISTS "Couple members can view members" ON public.couple_members;
+CREATE POLICY "Couple members can view members" ON public.couple_members
+  FOR SELECT TO authenticated
+  USING (public.is_couple_member(couple_id) OR user_id = auth.uid());
 
-  -- Vault Items (Strict couple scoped)
-  DROP POLICY IF EXISTS "Couple members can access vault" ON public.vault_items;
-  CREATE POLICY "Couple members can access vault" ON public.vault_items FOR ALL USING (true) WITH CHECK (true);
+-- 4. MESSAGES POLICIES
+DROP POLICY IF EXISTS "Couple members can view messages" ON public.messages;
+CREATE POLICY "Couple members can view messages" ON public.messages
+  FOR SELECT TO authenticated
+  USING (public.is_couple_member(couple_id));
 
-  -- Timeline
-  DROP POLICY IF EXISTS "Couple members can access timeline" ON public.timeline_events;
-  CREATE POLICY "Couple members can access timeline" ON public.timeline_events FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Couple members can insert messages" ON public.messages;
+CREATE POLICY "Couple members can insert messages" ON public.messages
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    public.is_couple_member(couple_id) AND
+    sender_id = auth.uid()::text
+  );
 
-  -- Bucket List
-  DROP POLICY IF EXISTS "Couple members can access bucket list" ON public.bucket_list_items;
-  CREATE POLICY "Couple members can access bucket list" ON public.bucket_list_items FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Couple members can update messages" ON public.messages;
+CREATE POLICY "Couple members can update messages" ON public.messages
+  FOR UPDATE TO authenticated
+  USING (public.is_couple_member(couple_id));
 
-  -- Locations
-  DROP POLICY IF EXISTS "Couple members can access locations" ON public.locations;
-  CREATE POLICY "Couple members can access locations" ON public.locations FOR ALL USING (true) WITH CHECK (true);
+-- 5. VAULT ITEMS POLICIES
+DROP POLICY IF EXISTS "Couple members can view vault items" ON public.vault_items;
+CREATE POLICY "Couple members can view vault items" ON public.vault_items
+  FOR SELECT TO authenticated
+  USING (public.is_couple_member(couple_id));
 
-  -- Media
-  DROP POLICY IF EXISTS "Couple members can access media" ON public.media;
-  CREATE POLICY "Couple members can access media" ON public.media FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Couple members can insert vault items" ON public.vault_items;
+CREATE POLICY "Couple members can insert vault items" ON public.vault_items
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    public.is_couple_member(couple_id) AND
+    uploaded_by = auth.uid()::text
+  );
 
-  -- Sessions
-  DROP POLICY IF EXISTS "Session token access" ON public.sessions;
-  CREATE POLICY "Session token access" ON public.sessions FOR ALL USING (true) WITH CHECK (true);
-END $$;
+DROP POLICY IF EXISTS "Creators can delete vault items" ON public.vault_items;
+CREATE POLICY "Creators can delete vault items" ON public.vault_items
+  FOR DELETE TO authenticated
+  USING (
+    public.is_couple_member(couple_id) AND
+    uploaded_by = auth.uid()::text
+  );
+
+-- 6. MEMORIES POLICIES
+DROP POLICY IF EXISTS "Couple members can view memories" ON public.memories;
+CREATE POLICY "Couple members can view memories" ON public.memories
+  FOR SELECT TO authenticated
+  USING (public.is_couple_member(couple_id));
+
+DROP POLICY IF EXISTS "Couple members can insert memories" ON public.memories;
+CREATE POLICY "Couple members can insert memories" ON public.memories
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    public.is_couple_member(couple_id) AND
+    (creator_id IS NULL OR creator_id = auth.uid()::text)
+  );
+
+DROP POLICY IF EXISTS "Couple members can update memories" ON public.memories;
+CREATE POLICY "Couple members can update memories" ON public.memories
+  FOR UPDATE TO authenticated
+  USING (public.is_couple_member(couple_id));
+
+DROP POLICY IF EXISTS "Couple members can delete memories" ON public.memories;
+CREATE POLICY "Couple members can delete memories" ON public.memories
+  FOR DELETE TO authenticated
+  USING (public.is_couple_member(couple_id));
+
+-- 7. LETTERS POLICIES
+DROP POLICY IF EXISTS "Couple members can view letters" ON public.letters;
+CREATE POLICY "Couple members can view letters" ON public.letters
+  FOR SELECT TO authenticated
+  USING (public.is_couple_member(couple_id));
+
+DROP POLICY IF EXISTS "Couple members can insert letters" ON public.letters;
+CREATE POLICY "Couple members can insert letters" ON public.letters
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    public.is_couple_member(couple_id) AND
+    sender_id = auth.uid()::text
+  );
+
+DROP POLICY IF EXISTS "Couple members can update letters" ON public.letters;
+CREATE POLICY "Couple members can update letters" ON public.letters
+  FOR UPDATE TO authenticated
+  USING (public.is_couple_member(couple_id));
+
+-- 8. LOCATIONS POLICIES
+DROP POLICY IF EXISTS "Couple members can view locations" ON public.locations;
+CREATE POLICY "Couple members can view locations" ON public.locations
+  FOR SELECT TO authenticated
+  USING (public.is_couple_member(couple_id));
+
+DROP POLICY IF EXISTS "Users can only update own location" ON public.locations;
+CREATE POLICY "Users can only update own location" ON public.locations
+  FOR ALL TO authenticated
+  USING (user_id = auth.uid()::text)
+  WITH CHECK (user_id = auth.uid()::text AND public.is_couple_member(couple_id));
+
+-- 9. MEDIA POLICIES
+DROP POLICY IF EXISTS "Couple members can access media" ON public.media;
+CREATE POLICY "Couple members can access media" ON public.media
+  FOR ALL TO authenticated
+  USING (public.is_couple_member(couple_id))
+  WITH CHECK (public.is_couple_member(couple_id));
+
+-- 10. TIMELINE, BUCKET LIST, MOVIE SESSIONS
+DROP POLICY IF EXISTS "Couple members can access timeline" ON public.timeline_events;
+CREATE POLICY "Couple members can access timeline" ON public.timeline_events
+  FOR ALL TO authenticated
+  USING (public.is_couple_member(couple_id))
+  WITH CHECK (public.is_couple_member(couple_id));
+
+DROP POLICY IF EXISTS "Couple members can access bucket list" ON public.bucket_list_items;
+CREATE POLICY "Couple members can access bucket list" ON public.bucket_list_items
+  FOR ALL TO authenticated
+  USING (public.is_couple_member(couple_id))
+  WITH CHECK (public.is_couple_member(couple_id));
+
+DROP POLICY IF EXISTS "Couple members can access movie sessions" ON public.movie_sessions;
+CREATE POLICY "Couple members can access movie sessions" ON public.movie_sessions
+  FOR ALL TO authenticated
+  USING (public.is_couple_member(couple_id))
+  WITH CHECK (public.is_couple_member(couple_id));
 
 -- ==============================================================================
 -- REALTIME PUBLICATIONS (Enable Supabase Realtime)
@@ -300,10 +414,55 @@ BEGIN
 END $$;
 
 -- ==============================================================================
--- INITIAL SEED DATA (Ragul & Akshya)
+-- AUTO-SYNC TRIGGER: Provision user profile on auth.users sign up
 -- ==============================================================================
+CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.users (id, email, name, nickname, city, is_online)
+  VALUES (
+    new.id,
+    new.email,
+    COALESCE(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
+    COALESCE(new.raw_user_meta_data->>'nickname', split_part(new.email, '@', 1)),
+    COALESCE(new.raw_user_meta_data->>'city', 'Puducherry'),
+    true
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email;
 
--- Seed Couple
+  -- Ensure membership in default couple
+  INSERT INTO public.couple_members (couple_id, user_id, role)
+  VALUES ('couple_akra_1', new.id, 'partner')
+  ON CONFLICT (couple_id, user_id) DO NOTHING;
+
+  -- Initialize location record
+  INSERT INTO public.locations (user_id, couple_id, lat, lng, latitude, longitude, accuracy, city, is_sharing)
+  VALUES (
+    new.id::text,
+    'couple_akra_1',
+    11.9416,
+    79.8083,
+    '11.9416',
+    '79.8083',
+    10,
+    COALESCE(new.raw_user_meta_data->>'city', 'Puducherry'),
+    true
+  )
+  ON CONFLICT (user_id) DO NOTHING;
+
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_auth_user();
+
+-- ==============================================================================
+-- INITIAL SEED: Couple space
+-- ==============================================================================
 INSERT INTO public.couples (id, name, partner_code, anniversary_date, start_date, story, song_title, song_artist, vault_pin)
 VALUES (
   'couple_akra_1',
@@ -320,66 +479,31 @@ ON CONFLICT (id) DO UPDATE SET
   vault_pin = EXCLUDED.vault_pin,
   name = EXCLUDED.name;
 
--- Seed Users: Ragul (Mama) & Akshya (Akshu)
-INSERT INTO public.users (uid, email, password_hash, name, nickname, avatar, city, bio, partner_id, is_online)
-VALUES
-  (
-    'ragul_mama',
-    'ragultheking0007@gmail.com',
-    'mama123',
-    'Ragul',
-    'Mama',
-    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80',
-    'Puducherry',
-    'Building our little world, wherever I am.',
-    'akshu_akshya',
-    true
-  ),
-  (
-    'akshu_akshya',
-    'akshya@akra.love',
-    'akshu123',
-    'Akshya',
-    'Akshu',
-    'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&auto=format&fit=crop&q=80',
-    'Bangalore',
-    'Holding the other end of the thread.',
-    'ragul_mama',
-    true
-  )
-ON CONFLICT (uid) DO UPDATE SET
-  password_hash = EXCLUDED.password_hash,
-  name = EXCLUDED.name,
-  nickname = EXCLUDED.nickname;
-
--- Seed Couple Members
-INSERT INTO public.couple_members (couple_id, user_id, role)
-VALUES
-  ('couple_akra_1', 'ragul_mama', 'partner'),
-  ('couple_akra_1', 'akshu_akshya', 'partner')
-ON CONFLICT DO NOTHING;
-
--- Seed Initial GPS Locations
-INSERT INTO public.locations (couple_id, user_id, lat, lng, latitude, longitude, accuracy, city, is_sharing)
-VALUES
-  ('couple_akra_1', 'ragul', 11.9416, 79.8083, '11.9416', '79.8083', 10, 'Puducherry', true),
-  ('couple_akra_1', 'akshu', 12.9716, 77.5946, '12.9716', '77.5946', 12, 'Bangalore', true),
-  ('couple_akra_1', 'ragul_mama', 11.9416, 79.8083, '11.9416', '79.8083', 10, 'Puducherry', true),
-  ('couple_akra_1', 'akshu_akshya', 12.9716, 77.5946, '12.9716', '77.5946', 12, 'Bangalore', true)
-ON CONFLICT (user_id) DO UPDATE SET
-  lat = EXCLUDED.lat,
-  lng = EXCLUDED.lng,
-  latitude = EXCLUDED.latitude,
-  longitude = EXCLUDED.longitude,
-  city = EXCLUDED.city,
-  is_sharing = EXCLUDED.is_sharing;
-
 -- ==============================================================================
 -- STORAGE BUCKETS SETUP (Public media & secure vault storage)
+-- Max file size: 10MB (10485760 bytes)
+-- Allowed types: image/jpeg, image/png, image/webp
 -- ==============================================================================
-INSERT INTO storage.buckets (id, name, public)
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES 
-  ('akra-media', 'akra-media', true),
-  ('akra-photobooth', 'akra-photobooth', true),
-  ('akra-vault', 'akra-vault', false)
-ON CONFLICT (id) DO NOTHING;
+  ('akra-media', 'akra-media', true, 10485760, ARRAY['image/jpeg', 'image/png', 'image/webp']),
+  ('akra-photobooth', 'akra-photobooth', true, 10485760, ARRAY['image/jpeg', 'image/png', 'image/webp']),
+  ('akra-vault', 'akra-vault', false, 10485760, ARRAY['image/jpeg', 'image/png', 'image/webp'])
+ON CONFLICT (id) DO UPDATE SET
+  file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+-- Storage RLS: Authenticated couple members can read & write their media
+DROP POLICY IF EXISTS "Authenticated users can upload media" ON storage.objects;
+CREATE POLICY "Authenticated users can upload media" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id IN ('akra-media', 'akra-photobooth', 'akra-vault')
+    AND LOWER(storage.extension(name)) IN ('jpg', 'jpeg', 'png', 'webp')
+  );
+
+DROP POLICY IF EXISTS "Authenticated users can read media" ON storage.objects;
+CREATE POLICY "Authenticated users can read media" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id IN ('akra-media', 'akra-photobooth', 'akra-vault'));
+

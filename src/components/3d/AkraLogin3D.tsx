@@ -5,15 +5,46 @@ import { Lock, User, ArrowRight, Shield, Eye, EyeOff, KeyRound, Sparkles } from 
 import { AkraLogo } from '../AkraLogo';
 
 export const AkraLogin3D: React.FC = () => {
-  const { login } = useAkra();
+  const { login, sendPasswordResetEmail, showToast } = useAkra();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Form State - Just Nickname and Password
   const [nickname, setNickname] = useState('Mama');
-  const [password, setPassword] = useState('mama123');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [isWarping, setIsWarping] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const [failedAttempts, setFailedAttempts] = useState(() => {
+    return parseInt(sessionStorage.getItem('akra_login_fails') || '0', 10) || 0;
+  });
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setCooldownSeconds(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownSeconds]);
+
+  // Forgot Password Modal State
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [resetTab, setResetTab] = useState<'direct' | 'email'>('direct');
+  const [resetEmail, setResetEmail] = useState('ragultheking0007@gmail.com');
+  const [partnerCode, setPartnerCode] = useState('AKRA-2024');
+  const [newResetPassword, setNewResetPassword] = useState('');
+  const [confirmResetPassword, setConfirmResetPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [isResettingDirect, setIsResettingDirect] = useState(false);
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const [resetSuccessMsg, setResetSuccessMsg] = useState('');
+  const [resetErrorMsg, setResetErrorMsg] = useState('');
 
   // 3D Scene Refs
   const mouseRef = useRef({ x: 0, y: 0, targetX: 0, targetY: 0 });
@@ -229,31 +260,126 @@ export const AkraLogin3D: React.FC = () => {
     };
   }, []);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cooldownSeconds > 0) {
+      setErrorMsg(`Too many login attempts. Please wait ${cooldownSeconds}s before trying again.`);
+      return;
+    }
     setErrorMsg('');
 
     if (!nickname.trim() || !password.trim()) {
-      setErrorMsg('Please enter your nickname and password.');
+      setErrorMsg('Please enter your nickname or email, and your password.');
       return;
     }
 
     // Trigger soft dissolve entrance
     setIsWarping(true);
 
-    setTimeout(() => {
-      const success = login(nickname.trim(), password.trim());
-      if (!success) {
+    try {
+      const res = await login(nickname.trim(), password.trim());
+      if (!res.success) {
         setIsWarping(false);
-        setErrorMsg('Invalid credentials. Use Mama (mama123) or Akshu (akshu123).');
+        const newFails = failedAttempts + 1;
+        setFailedAttempts(newFails);
+        sessionStorage.setItem('akra_login_fails', String(newFails));
+
+        if (newFails >= 8) {
+          setCooldownSeconds(60);
+          setErrorMsg('Multiple failed attempts. Throttled for 60s to protect account security.');
+        } else if (newFails >= 5) {
+          setCooldownSeconds(30);
+          setErrorMsg('Too many failed attempts. Please wait 30s before trying again.');
+        } else if (newFails >= 3) {
+          setCooldownSeconds(10);
+          setErrorMsg('Multiple failed attempts. Please wait 10s.');
+        } else {
+          setErrorMsg(res.error || 'Invalid credentials. Please verify your password.');
+        }
+      } else {
+        sessionStorage.removeItem('akra_login_fails');
       }
-    }, 700);
+    } catch (err: any) {
+      setIsWarping(false);
+      setErrorMsg(err.message || 'Authentication error.');
+    }
   };
 
-  const handleSelectProfile = (selectedNick: string, selectedPass: string) => {
+  const handleSelectProfile = (selectedNick: string) => {
     setNickname(selectedNick);
-    setPassword(selectedPass);
     setErrorMsg('');
+  };
+
+  const handleDirectReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetErrorMsg('');
+    setResetSuccessMsg('');
+
+    if (newResetPassword.length < 6) {
+      setResetErrorMsg('New password must be at least 6 characters.');
+      return;
+    }
+    if (newResetPassword !== confirmResetPassword) {
+      setResetErrorMsg('Passwords do not match.');
+      return;
+    }
+
+    setIsResettingDirect(true);
+    try {
+      const response = await fetch('/api/auth/reset-password-with-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: resetEmail.trim(),
+          partnerCode: partnerCode.trim(),
+          newPassword: newResetPassword.trim(),
+        }),
+      });
+
+      const resData = await response.json();
+      if (!response.ok || !resData.success) {
+        setIsResettingDirect(false);
+        setResetErrorMsg(resData.error || 'Failed to update password.');
+        return;
+      }
+
+      setResetSuccessMsg('Password updated in Supabase! Logging you in...');
+      showToast('Password Updated! ✨', 'Opening the door to AKRA...', 'love');
+
+      // Automatically sign in with the new password
+      const loginRes = await login(resetEmail.trim(), newResetPassword.trim());
+      setIsResettingDirect(false);
+      if (!loginRes.success) {
+        setResetErrorMsg('Password updated, but auto-login failed. Please close this modal and sign in.');
+      } else {
+        setShowForgotModal(false);
+      }
+    } catch (err: any) {
+      setIsResettingDirect(false);
+      setResetErrorMsg(err?.message || 'Network error updating password.');
+    }
+  };
+
+  const handleSendReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetErrorMsg('');
+    setResetSuccessMsg('');
+
+    if (!resetEmail.trim()) {
+      setResetErrorMsg('Please enter your email address.');
+      return;
+    }
+
+    setIsSendingReset(true);
+    const res = await sendPasswordResetEmail(resetEmail.trim());
+    setIsSendingReset(false);
+
+    if (!res.success) {
+      setResetErrorMsg(res.error || 'Failed to send password reset email.');
+    } else {
+      setResetSuccessMsg(`Recovery link sent! Check your inbox for ${resetEmail.trim()}. Click the link to set your new password directly.`);
+      showToast('Reset Link Sent 💌', `Check ${resetEmail.trim()} for your password recovery link.`, 'love');
+    }
   };
 
   return (
@@ -319,7 +445,7 @@ export const AkraLogin3D: React.FC = () => {
             <div className="flex items-center gap-2 mb-5">
               <button
                 type="button"
-                onClick={() => handleSelectProfile('Mama', 'mama123')}
+                onClick={() => handleSelectProfile('Mama')}
                 className={`flex-1 py-2 px-3 rounded-2xl border transition-all text-xs flex items-center justify-center gap-2 cursor-pointer ${
                   nickname.toLowerCase() === 'mama' || nickname.toLowerCase() === 'ragul'
                     ? 'bg-[#5b3a2e] text-[#f9efe8] border-[#5b3a2e] shadow-sm font-semibold'
@@ -331,7 +457,7 @@ export const AkraLogin3D: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => handleSelectProfile('Akshu', 'akshu123')}
+                onClick={() => handleSelectProfile('Akshu')}
                 className={`flex-1 py-2 px-3 rounded-2xl border transition-all text-xs flex items-center justify-center gap-2 cursor-pointer ${
                   nickname.toLowerCase() === 'akshu' || nickname.toLowerCase() === 'akshya'
                     ? 'bg-[#5b3a2e] text-[#f9efe8] border-[#5b3a2e] shadow-sm font-semibold'
@@ -347,7 +473,7 @@ export const AkraLogin3D: React.FC = () => {
             <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div>
                 <label className="block micro-label mb-1.5 text-[#5b3a2e]">
-                  Nickname
+                  Nickname or Email
                 </label>
                 <div className="relative">
                   <User className="w-4 h-4 text-[#7a5240]/60 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -356,7 +482,7 @@ export const AkraLogin3D: React.FC = () => {
                     value={nickname}
                     onChange={(e) => setNickname(e.target.value)}
                     required
-                    placeholder="Enter nickname (Mama or Akshu)"
+                    placeholder="Mama or Akshu"
                     className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-[#ffffff]/70 border border-[#7a5240]/20 text-xs text-[#5b3a2e] font-medium placeholder-[#7a5240]/40 focus:outline-none focus:border-[#5b3a2e] focus:ring-1 focus:ring-[#5b3a2e] transition"
                   />
                 </div>
@@ -373,7 +499,7 @@ export const AkraLogin3D: React.FC = () => {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    placeholder="Enter password (mama123 or akshu123)"
+                    placeholder="Enter your password"
                     className="w-full pl-10 pr-10 py-2.5 rounded-2xl bg-[#ffffff]/70 border border-[#7a5240]/20 text-xs text-[#5b3a2e] font-medium placeholder-[#7a5240]/40 focus:outline-none focus:border-[#5b3a2e] focus:ring-1 focus:ring-[#5b3a2e] transition"
                   />
                   <button
@@ -382,6 +508,23 @@ export const AkraLogin3D: React.FC = () => {
                     className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#7a5240]/60 hover:text-[#5b3a2e] transition cursor-pointer"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <div className="flex justify-end mt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const initialEmail = nickname.toLowerCase() === 'mama' || nickname.toLowerCase() === 'ragul'
+                        ? 'ragultheking0007@gmail.com'
+                        : 'akshya@akra.love';
+                      setResetEmail(initialEmail);
+                      setResetErrorMsg('');
+                      setResetSuccessMsg('');
+                      setShowForgotModal(true);
+                    }}
+                    className="text-[11px] text-[#7a5240]/80 hover:text-[#5b3a2e] hover:underline transition cursor-pointer"
+                  >
+                    Forgot password?
                   </button>
                 </div>
               </div>
@@ -396,33 +539,25 @@ export const AkraLogin3D: React.FC = () => {
               <button
                 type="submit"
                 id="login-enter-btn"
-                disabled={isWarping}
-                className="w-full mt-1 py-3.5 rounded-full bg-[#5b3a2e] text-[#f9efe8] font-semibold text-xs tracking-wide hover:bg-[#4a2e24] active:scale-[0.98] transition-all shadow-md flex items-center justify-center gap-2 group cursor-pointer border border-[#7a5240]/30"
+                disabled={isWarping || cooldownSeconds > 0}
+                className="w-full mt-1 py-3.5 rounded-full bg-[#5b3a2e] text-[#f9efe8] font-semibold text-xs tracking-wide hover:bg-[#4a2e24] active:scale-[0.98] transition-all shadow-md flex items-center justify-center gap-2 group cursor-pointer border border-[#7a5240]/30 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <span>{isWarping ? 'Opening the door...' : 'Open the Door'}</span>
+                <span>
+                  {isWarping
+                    ? 'Opening the door...'
+                    : cooldownSeconds > 0
+                    ? `Please wait (${cooldownSeconds}s)`
+                    : 'Open the Door'}
+                </span>
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
               </button>
             </form>
 
-            {/* Permanent Clear Credentials Card */}
-            <div className="mt-5 p-3.5 rounded-2xl bg-[#ffffff]/65 border border-[#7a5240]/15 text-xs text-[#5b3a2e]">
-              <div className="flex items-center gap-1.5 font-semibold text-[#5b3a2e] mb-2">
-                <KeyRound className="w-3.5 h-3.5 text-[#b06a5e]" />
-                <span>Your Door Credentials</span>
-              </div>
-              <div className="space-y-1.5 text-[11px] text-[#7a5240]">
-                <div className="flex items-center justify-between py-0.5 border-b border-[#7a5240]/10">
-                  <span>Mama (Ragul):</span>
-                  <span className="font-mono bg-[#ecd0c8]/60 px-2 py-0.5 rounded text-[#5b3a2e]">
-                    Nickname: <b>Mama</b> • Password: <b>mama123</b>
-                  </span>
-                </div>
-                <div className="flex items-center justify-between py-0.5">
-                  <span>Akshu (Akshya):</span>
-                  <span className="font-mono bg-[#ecd0c8]/60 px-2 py-0.5 rounded text-[#5b3a2e]">
-                    Nickname: <b>Akshu</b> • Password: <b>akshu123</b>
-                  </span>
-                </div>
+            {/* Supabase Security Badge */}
+            <div className="mt-5 p-3 rounded-2xl bg-[#ffffff]/65 border border-[#7a5240]/15 text-xs text-[#5b3a2e] flex items-center gap-2.5">
+              <Shield className="w-4 h-4 text-[#b06a5e] shrink-0" />
+              <div className="text-[11px] text-[#7a5240] leading-tight">
+                <span className="font-semibold text-[#5b3a2e]">Real-time Supabase Auth:</span> Sign in securely with your private password to enter the sanctuary.
               </div>
             </div>
 
@@ -441,6 +576,253 @@ export const AkraLogin3D: React.FC = () => {
       <footer className="relative z-10 p-6 text-center text-xs text-[#7a5240]/70 font-serif italic">
         <p>"A place that feels kept and personal."</p>
       </footer>
+
+      {/* Forgot Password Modal Dialog */}
+      {showForgotModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md bg-[#FFF5F7] rounded-[32px] p-6 sm:p-8 shadow-2xl border border-[#F0C9D8] text-left relative max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 text-[#b06a5e]">
+                <KeyRound className="w-4 h-4" />
+                <span className="text-[11px] font-semibold uppercase tracking-wider">Password Recovery</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForgotModal(false);
+                  setResetSuccessMsg('');
+                  setResetErrorMsg('');
+                }}
+                className="text-xs text-[#7a5240]/60 hover:text-[#5b3a2e] transition"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            <h3 className="text-xl font-serif font-bold text-[#3E2723] mb-1">
+              Reset Your Password
+            </h3>
+            <p className="text-xs text-[#795548] mb-4 leading-relaxed">
+              Set a new password directly using your shared partner key, without needing email links.
+            </p>
+
+            {/* Mode Tabs */}
+            <div className="flex p-1 bg-[#ecd0c8]/40 rounded-2xl mb-4 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => {
+                  setResetTab('direct');
+                  setResetErrorMsg('');
+                  setResetSuccessMsg('');
+                }}
+                className={`flex-1 py-1.5 rounded-xl transition text-center ${
+                  resetTab === 'direct'
+                    ? 'bg-white text-[#3e2723] shadow-sm font-semibold'
+                    : 'text-[#7a5240]/80 hover:text-[#3e2723]'
+                }`}
+              >
+                ✨ Instant Reset (No Email)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setResetTab('email');
+                  setResetErrorMsg('');
+                  setResetSuccessMsg('');
+                }}
+                className={`flex-1 py-1.5 rounded-xl transition text-center ${
+                  resetTab === 'email'
+                    ? 'bg-white text-[#3e2723] shadow-sm font-semibold'
+                    : 'text-[#7a5240]/80 hover:text-[#3e2723]'
+                }`}
+              >
+                ✉️ Email Link
+              </button>
+            </div>
+
+            {/* Partner Profile Selection */}
+            <div className="mb-4">
+              <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#5D4037] mb-1.5">
+                Who are you?
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setResetEmail('ragultheking0007@gmail.com')}
+                  className={`py-2 px-3 rounded-2xl text-xs font-medium border text-left transition flex items-center gap-2 ${
+                    resetEmail === 'ragultheking0007@gmail.com'
+                      ? 'bg-[#5b3a2e] text-[#f9efe8] border-[#5b3a2e]'
+                      : 'bg-white/70 text-[#5b3a2e] border-[#F0C9D8] hover:bg-white'
+                  }`}
+                >
+                  <span className="text-sm">🧔🏽</span>
+                  <div>
+                    <div className="font-semibold leading-tight">Mama</div>
+                    <div className="text-[10px] opacity-75">Ragul</div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setResetEmail('akshya@akra.love')}
+                  className={`py-2 px-3 rounded-2xl text-xs font-medium border text-left transition flex items-center gap-2 ${
+                    resetEmail === 'akshya@akra.love'
+                      ? 'bg-[#5b3a2e] text-[#f9efe8] border-[#5b3a2e]'
+                      : 'bg-white/70 text-[#5b3a2e] border-[#F0C9D8] hover:bg-white'
+                  }`}
+                >
+                  <span className="text-sm">🌸</span>
+                  <div>
+                    <div className="font-semibold leading-tight">Akshu</div>
+                    <div className="text-[10px] opacity-75">Akshya</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {resetTab === 'direct' ? (
+              <form onSubmit={handleDirectReset} className="space-y-3.5">
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#5D4037] mb-1">
+                    Couple Partner Key
+                  </label>
+                  <input
+                    type="text"
+                    value={partnerCode}
+                    onChange={(e) => setPartnerCode(e.target.value)}
+                    required
+                    placeholder="AKRA-2024"
+                    className="w-full px-3.5 py-2 rounded-2xl bg-white/80 border border-[#F0C9D8] text-xs text-[#3E2723] font-mono font-medium focus:outline-none focus:border-[#5D4037] transition"
+                  />
+                  <p className="text-[10px] text-[#795548]/70 mt-1">
+                    Secret key shared between Ragul & Akshya (Default: AKRA-2024)
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#5D4037] mb-1">
+                    New Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewPassword ? 'text' : 'password'}
+                      value={newResetPassword}
+                      onChange={(e) => setNewResetPassword(e.target.value)}
+                      required
+                      minLength={6}
+                      placeholder="Enter at least 6 characters"
+                      className="w-full pl-3.5 pr-10 py-2 rounded-2xl bg-white/80 border border-[#F0C9D8] text-xs text-[#3E2723] font-medium focus:outline-none focus:border-[#5D4037] transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#7a5240]/60 hover:text-[#5b3a2e]"
+                    >
+                      {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#5D4037] mb-1">
+                    Confirm New Password
+                  </label>
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={confirmResetPassword}
+                    onChange={(e) => setConfirmResetPassword(e.target.value)}
+                    required
+                    minLength={6}
+                    placeholder="Re-enter your new password"
+                    className="w-full px-3.5 py-2 rounded-2xl bg-white/80 border border-[#F0C9D8] text-xs text-[#3E2723] font-medium focus:outline-none focus:border-[#5D4037] transition"
+                  />
+                </div>
+
+                {resetErrorMsg && (
+                  <div className="p-2.5 rounded-xl bg-rose-100 border border-rose-300 text-xs text-rose-800">
+                    {resetErrorMsg}
+                  </div>
+                )}
+
+                {resetSuccessMsg && (
+                  <div className="p-2.5 rounded-xl bg-emerald-100 border border-emerald-300 text-xs text-emerald-900 font-medium">
+                    {resetSuccessMsg}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForgotModal(false);
+                      setResetSuccessMsg('');
+                      setResetErrorMsg('');
+                    }}
+                    className="flex-1 py-2.5 rounded-full border border-[#7a5240]/20 text-xs text-[#5b3a2e] font-medium hover:bg-white/50 transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isResettingDirect}
+                    className="flex-1 py-2.5 rounded-full bg-[#5b3a2e] text-[#f9efe8] text-xs font-semibold hover:bg-[#4a2e24] transition shadow-sm cursor-pointer disabled:opacity-50"
+                  >
+                    {isResettingDirect ? 'Setting Password...' : 'Save Password & Enter'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleSendReset} className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#5D4037] mb-1.5">
+                    Account Email
+                  </label>
+                  <input
+                    type="email"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    required
+                    placeholder="ragultheking0007@gmail.com"
+                    className="w-full px-4 py-2.5 rounded-2xl bg-white/80 border border-[#F0C9D8] text-xs text-[#3E2723] font-medium placeholder-[#795548]/40 focus:outline-none focus:border-[#5D4037] focus:ring-1 focus:ring-[#5D4037] transition"
+                  />
+                </div>
+
+                {resetErrorMsg && (
+                  <div className="p-2.5 rounded-xl bg-rose-100 border border-rose-300 text-xs text-rose-800">
+                    {resetErrorMsg}
+                  </div>
+                )}
+
+                {resetSuccessMsg && (
+                  <div className="p-2.5 rounded-xl bg-emerald-100 border border-emerald-300 text-xs text-emerald-900 font-medium">
+                    {resetSuccessMsg}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForgotModal(false);
+                      setResetSuccessMsg('');
+                      setResetErrorMsg('');
+                    }}
+                    className="flex-1 py-2.5 rounded-full border border-[#7a5240]/20 text-xs text-[#5b3a2e] font-medium hover:bg-white/50 transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSendingReset}
+                    className="flex-1 py-2.5 rounded-full bg-[#5b3a2e] text-[#f9efe8] text-xs font-semibold hover:bg-[#4a2e24] transition shadow-sm cursor-pointer disabled:opacity-50"
+                  >
+                    {isSendingReset ? 'Sending...' : 'Send Recovery Email'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

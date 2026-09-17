@@ -21,7 +21,7 @@ export const LoginView: React.FC = () => {
   const [showPartnerConnectScreen, setShowPartnerConnectScreen] = useState(!isPartnerConnected);
   const [partnerCodeInput, setPartnerCodeInput] = useState('');
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -30,9 +30,13 @@ export const LoginView: React.FC = () => {
       return;
     }
 
-    const success = login(email.trim(), password.trim());
-    if (!success) {
-      setErrorMsg('Invalid email ID or password. Please verify your special credentials.');
+    try {
+      const res = await login(email.trim(), password.trim());
+      if (!res.success) {
+        setErrorMsg(res.error || 'Invalid email ID or password. Please verify your special credentials.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Authentication error.');
     }
   };
 
@@ -222,15 +226,13 @@ export const LoginView: React.FC = () => {
 
             <div className="space-y-1.5">
               <div className="p-2 bg-[#FFF0F5] rounded-xl border border-[#F0C9D8]/60">
-                <p className="font-bold text-[#5D4037]">Ragul (mama) • Puducherry</p>
-                <p className="text-[11px] text-[#795548]">Email: <code className="font-mono font-bold text-[#3E2723]">ragul@akra.love</code> or <code className="font-mono font-bold text-[#3E2723]">ragultheking0007@gmail.com</code></p>
-                <p className="text-[11px] text-[#795548]">Password: <code className="font-mono bg-[#EFE5E0] px-1.5 py-0.5 rounded font-bold text-[#5D4037]">mama123</code></p>
+                <p className="font-bold text-[#5D4037]">Ragul (Mama) • Puducherry</p>
+                <p className="text-[11px] text-[#795548]">Email: <code className="font-mono font-bold text-[#3E2723]">ragultheking0007@gmail.com</code></p>
               </div>
 
               <div className="p-2 bg-[#FFF0F5] rounded-xl border border-[#F0C9D8]/60">
-                <p className="font-bold text-[#5D4037]">Akshya (akshu) • Bangalore</p>
+                <p className="font-bold text-[#5D4037]">Akshya (Akshu) • Bangalore</p>
                 <p className="text-[11px] text-[#795548]">Email: <code className="font-mono font-bold text-[#3E2723]">akshya@akra.love</code></p>
-                <p className="text-[11px] text-[#795548]">Password: <code className="font-mono bg-[#EFE5E0] px-1.5 py-0.5 rounded font-bold text-[#5D4037]">akshu123</code></p>
               </div>
             </div>
           </div>

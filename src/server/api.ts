@@ -26,7 +26,14 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB max
+  limits: { fileSize: 10 * 1024 * 1024 }, // Strict 10MB max per image
+  fileFilter: (_req, file, cb) => {
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+      return cb(new Error('Invalid file type. Only JPEG, PNG, and WebP images are allowed.'));
+    }
+    cb(null, true);
+  },
 });
 
 // Broadcast helper placeholder (injected by server.ts)
@@ -42,7 +49,6 @@ let memUsers: any[] = [
   {
     uid: 'ragul_mama',
     email: 'ragultheking0007@gmail.com',
-    passwordHash: 'mama123',
     name: 'Ragul',
     nickname: 'Mama',
     avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80',
@@ -54,7 +60,6 @@ let memUsers: any[] = [
   {
     uid: 'akshu_akshya',
     email: 'akshya@akra.love',
-    passwordHash: 'akshu123',
     name: 'Akshya',
     nickname: 'Akshu',
     avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&auto=format&fit=crop&q=80',
@@ -91,6 +96,9 @@ let memMedia: any[] = [];
 // 1. AUTHENTICATION & SESSIONS
 // ==========================================
 
+// In-memory rate limiting map for login: max 5 failed attempts per 15 minutes per IP/user
+const loginRateLimitMap = new Map<string, { count: number; firstAttempt: number }>();
+
 apiRouter.post('/auth/login', async (req: Request, res: Response) => {
   try {
     const { nickname, email, password } = req.body;
@@ -99,6 +107,26 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
 
     if (!identifier) {
       return res.status(400).json({ error: 'Please provide a nickname or email' });
+    }
+
+    // Server-Side Rate Limiting Check
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const rateLimitKey = `${clientIp}_${identifier}`;
+    const now = Date.now();
+    const existingRate = loginRateLimitMap.get(rateLimitKey);
+
+    if (existingRate) {
+      if (now - existingRate.firstAttempt < 15 * 60 * 1000) {
+        if (existingRate.count >= 5) {
+          const remainingMins = Math.ceil((15 * 60 * 1000 - (now - existingRate.firstAttempt)) / 60000);
+          return res.status(429).json({
+            error: `Too many failed login attempts. Account locked for ${remainingMins} minute(s). You can also use password reset.`,
+          });
+        }
+      } else {
+        // Window expired, reset count
+        loginRateLimitMap.set(rateLimitKey, { count: 0, firstAttempt: now });
+      }
     }
 
     let allUsers = memUsers;
@@ -132,33 +160,50 @@ apiRouter.post('/auth/login', async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'User not recognized. Use Mama or Akshu.' });
     }
 
-    // Verify password
-    const expectedPass =
-      matchedUser.passwordHash ||
-      matchedUser.password_hash ||
-      (matchedUser.nickname.toLowerCase() === 'mama' ? 'mama123' : 'akshu123');
+    // Real Supabase Auth verification
+    let token = '';
+    let authenticatedUser = matchedUser;
 
-    if (cleanPass !== expectedPass && cleanPass !== 'mama123' && cleanPass !== 'akshu123') {
-      return res.status(401).json({ error: 'Incorrect password.' });
-    }
-
-    // Generate session token
-    const token = `akra_session_${matchedUser.uid}_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-    // Persist session to Supabase
     if (isServerSupabaseConfigured) {
-      await serverSupabase.from('sessions').insert({
-        id: `sess_${Date.now()}`,
-        user_id: matchedUser.uid,
-        token,
-        expires_at: expiresAt.toISOString(),
+      const { data: authData, error: authErr } = await serverSupabase.auth.signInWithPassword({
+        email: matchedUser.email,
+        password: cleanPass,
       });
+
+      if (authErr || !authData.session) {
+        // Increment server-side failed attempt counter
+        const cur = loginRateLimitMap.get(rateLimitKey);
+        if (cur && now - cur.firstAttempt < 15 * 60 * 1000) {
+          cur.count += 1;
+        } else {
+          loginRateLimitMap.set(rateLimitKey, { count: 1, firstAttempt: now });
+        }
+        const updatedCount = loginRateLimitMap.get(rateLimitKey)?.count || 1;
+        const attemptsLeft = Math.max(0, 5 - updatedCount);
+        const warningSuffix = attemptsLeft > 0 ? ` (${attemptsLeft} attempt${attemptsLeft === 1 ? '' : 's'} remaining)` : ' (Account locked for 15 minutes)';
+        return res.status(401).json({ error: (authErr?.message || 'Invalid credentials') + warningSuffix });
+      }
+
+      // Successful login: reset failed attempts
+      loginRateLimitMap.delete(rateLimitKey);
+
+      token = authData.session.access_token;
+      if (authData.user) {
+        authenticatedUser = {
+          ...matchedUser,
+          uid: authData.user.id,
+          email: authData.user.email,
+        };
+      }
 
       await serverSupabase
         .from('users')
         .update({ is_online: true, last_seen: new Date().toISOString() })
-        .eq('uid', matchedUser.uid);
+        .eq('id', authData.user?.id || matchedUser.uid);
+    } else {
+      return res.status(503).json({
+        error: 'Supabase authentication is not configured. Please supply VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.',
+      });
     }
 
     const partner = allUsers.find((u) => u.uid === matchedUser.partnerId || u.uid === matchedUser.partner_id);
@@ -303,12 +348,20 @@ apiRouter.post('/messages', requireAuth, async (req: AuthRequest, res: Response)
     const user = req.user!;
     const { text, imageUrl, attachmentType, audioUrl } = req.body;
 
+    const cleanText = typeof text === 'string' ? text.trim() : '';
+    if (!cleanText && !imageUrl && !audioUrl) {
+      return res.status(400).json({ error: 'Message cannot be empty.' });
+    }
+    if (cleanText.length > 2000) {
+      return res.status(400).json({ error: 'Message exceeds maximum length of 2000 characters.' });
+    }
+
     const newMsg = {
       id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       coupleId: 'couple_akra_1',
       senderId: user.uid,
       senderName: user.nickname || user.name || (user.uid.includes('mama') ? 'Mama' : 'Akshu'),
-      text: text || '',
+      text: cleanText,
       imageUrl: imageUrl || null,
       attachmentType: attachmentType || 'none',
       audioUrl: audioUrl || null,
@@ -434,13 +487,25 @@ apiRouter.post('/memories', requireAuth, async (req: AuthRequest, res: Response)
     const user = req.user!;
     const { title, description, date, year, location, imageUrl, tags, photoType } = req.body;
 
+    const cleanTitle = typeof title === 'string' ? title.trim() : '';
+    if (!cleanTitle) {
+      return res.status(400).json({ error: 'Memory title cannot be empty.' });
+    }
+    if (cleanTitle.length > 120) {
+      return res.status(400).json({ error: 'Memory title exceeds maximum limit of 120 characters.' });
+    }
+    const cleanDesc = typeof description === 'string' ? description.trim() : '';
+    if (cleanDesc.length > 2000) {
+      return res.status(400).json({ error: 'Memory description exceeds maximum limit of 2000 characters.' });
+    }
+
     const newMemory = {
       id: `mem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       coupleId: 'couple_akra_1',
       creatorId: user.uid,
       uploadedByName: user.nickname || user.name || 'Mama',
-      title: title || 'Precious Moment',
-      description: description || '',
+      title: cleanTitle,
+      description: cleanDesc,
       date: date || new Date().toISOString().split('T')[0],
       year: year ? parseInt(year, 10) : new Date().getFullYear(),
       location: location || '',
@@ -567,14 +632,29 @@ apiRouter.post('/letters', requireAuth, async (req: AuthRequest, res: Response) 
     const user = req.user!;
     const { title, content, stamp, waxSeal, paperStyle, scheduledFor, recipientId } = req.body;
 
+    const cleanTitle = typeof title === 'string' ? title.trim() : '';
+    const cleanContent = typeof content === 'string' ? content.trim() : '';
+    if (!cleanTitle) {
+      return res.status(400).json({ error: 'Letter title cannot be empty.' });
+    }
+    if (cleanTitle.length > 150) {
+      return res.status(400).json({ error: 'Letter title exceeds maximum limit of 150 characters.' });
+    }
+    if (!cleanContent) {
+      return res.status(400).json({ error: 'Letter content cannot be empty.' });
+    }
+    if (cleanContent.length > 5000) {
+      return res.status(400).json({ error: 'Letter content exceeds maximum limit of 5000 characters.' });
+    }
+
     const newLetter = {
       id: `letter_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       coupleId: 'couple_akra_1',
       senderId: user.uid,
       authorName: user.nickname || user.name || 'Mama',
       recipientId: recipientId || (user.uid.includes('mama') ? 'akshu_akshya' : 'ragul_mama'),
-      title: title || 'A Letter For You',
-      content: content || '',
+      title: cleanTitle,
+      content: cleanContent,
       stamp: stamp || 'rose',
       waxSeal: waxSeal || 'heart',
       paperStyle: paperStyle || 'vintage',
@@ -813,13 +893,25 @@ apiRouter.post('/timeline', requireAuth, async (req: AuthRequest, res: Response)
     const user = req.user!;
     const { title, date, description, category, imageUrl, location, icon } = req.body;
 
+    const cleanTitle = typeof title === 'string' ? title.trim() : '';
+    if (!cleanTitle) {
+      return res.status(400).json({ error: 'Milestone title cannot be empty.' });
+    }
+    if (cleanTitle.length > 120) {
+      return res.status(400).json({ error: 'Milestone title exceeds maximum limit of 120 characters.' });
+    }
+    const cleanDesc = typeof description === 'string' ? description.trim() : '';
+    if (cleanDesc.length > 1000) {
+      return res.status(400).json({ error: 'Milestone description exceeds maximum limit of 1000 characters.' });
+    }
+
     const newEvent = {
       id: `time_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       coupleId: 'couple_akra_1',
       createdBy: user.uid,
-      title: title || 'Our Milestone',
+      title: cleanTitle,
       date: date || new Date().toISOString().split('T')[0],
-      description: description || '',
+      description: cleanDesc,
       category: category || 'Milestone',
       imageUrl: imageUrl || null,
       location: location || null,
@@ -894,6 +986,7 @@ apiRouter.get('/bucket-list', requireAuth, async (_req: AuthRequest, res: Respon
           completed: b.completed,
           completedAt: b.completed_at,
           notes: b.notes,
+          imageUrl: b.image_url || b.imageUrl || null,
           createdAt: b.created_at,
         }));
         return res.json(mapped);
@@ -909,23 +1002,37 @@ apiRouter.get('/bucket-list', requireAuth, async (_req: AuthRequest, res: Respon
 apiRouter.post('/bucket-list', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const user = req.user!;
-    const { title, category, targetDate, notes } = req.body;
+    const { title, category, targetDate, notes, imageUrl } = req.body;
+
+    const cleanTitle = typeof title === 'string' ? title.trim() : '';
+    if (!cleanTitle) {
+      return res.status(400).json({ error: 'Bucket list title cannot be empty.' });
+    }
+    if (cleanTitle.length > 140) {
+      return res.status(400).json({ error: 'Bucket list title exceeds maximum limit of 140 characters.' });
+    }
+    const cleanNotes = typeof notes === 'string' ? notes.trim() : '';
+    if (cleanNotes.length > 1000) {
+      return res.status(400).json({ error: 'Bucket list notes exceed maximum limit of 1000 characters.' });
+    }
+    const cleanImageUrl = typeof imageUrl === 'string' && imageUrl.trim().length > 0 ? imageUrl.trim() : null;
 
     const newItem = {
       id: `bucket_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       coupleId: 'couple_akra_1',
       createdBy: user.uid,
       suggestedByName: user.nickname || user.name || 'Mama',
-      title: title || 'Dream Together',
+      title: cleanTitle,
       category: category || 'travel',
       targetDate: targetDate || null,
+      imageUrl: cleanImageUrl,
       completed: false,
-      notes: notes || null,
+      notes: cleanNotes || null,
       createdAt: new Date().toISOString(),
     };
 
     if (isServerSupabaseConfigured) {
-      await serverSupabase.from('bucket_list_items').insert({
+      const insertPayload: any = {
         id: newItem.id,
         couple_id: newItem.coupleId,
         created_by: newItem.createdBy,
@@ -936,7 +1043,15 @@ apiRouter.post('/bucket-list', requireAuth, async (req: AuthRequest, res: Respon
         completed: false,
         notes: newItem.notes,
         created_at: newItem.createdAt,
-      });
+      };
+      if (newItem.imageUrl) {
+        insertPayload.image_url = newItem.imageUrl;
+      }
+      const { error: insErr } = await serverSupabase.from('bucket_list_items').insert(insertPayload);
+      if (insErr && insErr.message?.includes('image_url')) {
+        delete insertPayload.image_url;
+        await serverSupabase.from('bucket_list_items').insert(insertPayload);
+      }
     }
 
     memBucket.push(newItem);
@@ -951,7 +1066,7 @@ apiRouter.post('/bucket-list', requireAuth, async (req: AuthRequest, res: Respon
 apiRouter.patch('/bucket-list/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const { completed, notes, targetDate } = req.body;
+    const { completed, notes, targetDate, imageUrl, title, category } = req.body;
 
     const updateData: any = {};
     if (completed !== undefined) {
@@ -960,6 +1075,9 @@ apiRouter.patch('/bucket-list/:id', requireAuth, async (req: AuthRequest, res: R
     }
     if (notes !== undefined) updateData.notes = notes;
     if (targetDate !== undefined) updateData.targetDate = targetDate;
+    if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
+    if (title !== undefined) updateData.title = title;
+    if (category !== undefined) updateData.category = category;
 
     if (isServerSupabaseConfigured) {
       const dbUpdate: any = {};
@@ -969,8 +1087,15 @@ apiRouter.patch('/bucket-list/:id', requireAuth, async (req: AuthRequest, res: R
       }
       if (notes !== undefined) dbUpdate.notes = notes;
       if (targetDate !== undefined) dbUpdate.target_date = targetDate;
+      if (imageUrl !== undefined) dbUpdate.image_url = imageUrl;
+      if (title !== undefined) dbUpdate.title = title;
+      if (category !== undefined) dbUpdate.category = category;
 
-      await serverSupabase.from('bucket_list_items').update(dbUpdate).eq('id', id);
+      const { error: upErr } = await serverSupabase.from('bucket_list_items').update(dbUpdate).eq('id', id);
+      if (upErr && upErr.message?.includes('image_url')) {
+        delete dbUpdate.image_url;
+        await serverSupabase.from('bucket_list_items').update(dbUpdate).eq('id', id);
+      }
     }
 
     memBucket = memBucket.map((b) => (b.id === id ? { ...b, ...updateData } : b));
@@ -1468,8 +1593,19 @@ apiRouter.post('/upload-base64', requireAuth, async (req: AuthRequest, res: Resp
     }
 
     const buffer = Buffer.from(matches[2], 'base64');
-    const mimeType = matches[1];
-    const ext = mimeType.includes('png') ? '.png' : '.jpg';
+    const mimeType = matches[1].toLowerCase();
+
+    // Enforce 10MB limit and allowed MIME types
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedMimeTypes.includes(mimeType)) {
+      return res.status(400).json({ error: 'Invalid image format. Only JPEG, PNG, and WebP are allowed.' });
+    }
+
+    if (buffer.length > 10 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Image size exceeds maximum limit of 10MB.' });
+    }
+
+    const ext = mimeType.includes('png') ? '.png' : mimeType.includes('webp') ? '.webp' : '.jpg';
     const safeName = filename
       ? `${filename.replace(/[^a-zA-Z0-9_-]/g, '')}-${Date.now()}${ext}`
       : `${folder}-${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`;
@@ -1540,3 +1676,112 @@ apiRouter.post('/upload-base64', requireAuth, async (req: AuthRequest, res: Resp
     res.status(500).json({ error: 'Failed to save base64 image' });
   }
 });
+
+// In-memory rate limiting map for password reset: max 5 attempts per 15 minutes per IP/email
+const resetRateLimitMap = new Map<string, { count: number; firstAttempt: number }>();
+
+/**
+ * Direct Partner Password Reset using Shared Couple Key
+ * Allows Ragul or Akshya to immediately set/reset their Supabase Auth password
+ * without relying on external email delivery or broken localhost redirect links.
+ */
+apiRouter.post('/auth/reset-password-with-code', async (req: Request, res: Response) => {
+  try {
+    const { email, partnerCode, newPassword } = req.body || {};
+
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const rateLimitKey = `${clientIp}_${(email || '').trim().toLowerCase()}`;
+    const now = Date.now();
+    const existing = resetRateLimitMap.get(rateLimitKey);
+
+    if (existing) {
+      if (now - existing.firstAttempt < 15 * 60 * 1000) {
+        if (existing.count >= 5) {
+          return res.status(429).json({
+            error: 'Too many password reset attempts. Please wait 15 minutes before trying again.',
+          });
+        }
+        existing.count += 1;
+      } else {
+        resetRateLimitMap.set(rateLimitKey, { count: 1, firstAttempt: now });
+      }
+    } else {
+      resetRateLimitMap.set(rateLimitKey, { count: 1, firstAttempt: now });
+    }
+
+    if (!partnerCode || partnerCode.trim().toUpperCase() !== 'AKRA-2024') {
+      return res.status(403).json({ error: 'Invalid partner code. Enter AKRA-2024 to verify couple identity.' });
+    }
+
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const isAllowedEmail =
+      cleanEmail === 'ragultheking0007@gmail.com' ||
+      cleanEmail === 'akshya@akra.love';
+
+    if (!isAllowedEmail) {
+      return res.status(400).json({ error: 'Invalid account email. Must be ragultheking0007@gmail.com or akshya@akra.love.' });
+    }
+
+    if (!newPassword || newPassword.trim().length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+
+    if (!isServerSupabaseConfigured) {
+      return res.status(500).json({ error: 'Supabase is not configured on the server.' });
+    }
+
+    // Find the user by email in Supabase Auth
+    const { data: { users }, error: listError } = await serverSupabase.auth.admin.listUsers();
+    if (listError) {
+      console.error('Failed to list Supabase users:', listError);
+      return res.status(500).json({ error: 'Could not access Supabase Auth.' });
+    }
+
+    const targetUser = users.find((u: any) => (u.email || '').toLowerCase() === cleanEmail);
+    if (!targetUser) {
+      // User doesn't exist yet, create them directly with confirmed email!
+      const { data: newUser, error: createError } = await serverSupabase.auth.admin.createUser({
+        email: cleanEmail,
+        password: newPassword.trim(),
+        email_confirm: true,
+        user_metadata: {
+          name: cleanEmail.includes('ragul') ? 'Ragul' : 'Akshya',
+          nickname: cleanEmail.includes('ragul') ? 'Mama' : 'Akshu',
+          user_id: cleanEmail.includes('ragul') ? 'mama' : 'akshu',
+        },
+      });
+
+      if (createError) {
+        console.error('Failed to create Supabase user:', createError);
+        return res.status(500).json({ error: createError.message });
+      }
+
+      return res.json({
+        success: true,
+        message: 'Account created and password set successfully! You can now log in.',
+        userId: newUser.user?.id,
+      });
+    }
+
+    // User exists, update password and confirm email
+    const { error: updateError } = await serverSupabase.auth.admin.updateUserById(targetUser.id, {
+      password: newPassword.trim(),
+      email_confirm: true,
+    });
+
+    if (updateError) {
+      console.error('Failed to update Supabase password:', updateError);
+      return res.status(500).json({ error: updateError.message });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Password updated successfully in Supabase Auth! You can now log in.',
+      userId: targetUser.id,
+    });
+  } catch (err: any) {
+    console.error('Error in reset-password-with-code:', err);
+    res.status(500).json({ error: err?.message || 'Server error resetting password' });
+  }
+});
+

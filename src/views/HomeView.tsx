@@ -348,8 +348,15 @@ export const HomeView: React.FC = () => {
             <div>
               <div className="relative aspect-4/3 w-full rounded-2xl overflow-hidden mb-3 bg-[#ecd0c8]">
                 <img
-                  src={upcomingFuture.imageUrl}
+                  src={
+                    upcomingFuture.imageUrl ||
+                    'https://images.unsplash.com/photo-1537996194471-e657df975ab4?w=800&auto=format&fit=crop&q=80'
+                  }
                   alt={upcomingFuture.title}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src =
+                      'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop&q=80';
+                  }}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                 />
                 <span className="absolute top-2 left-2 micro-label text-[8px] bg-[#f9efe8]/90 px-2 py-0.5 rounded-full border border-[#7a5240]/15">
@@ -360,7 +367,7 @@ export const HomeView: React.FC = () => {
                 {upcomingFuture.title}
               </h3>
               <p className="text-xs text-[#7a5240] font-serif italic line-clamp-2 mt-1">
-                Planned for {upcomingFuture.targetDate}
+                {upcomingFuture.targetDate ? `Planned for ${upcomingFuture.targetDate}` : 'Someday with you'}
               </p>
             </div>
             <div className="mt-3 pt-2.5 border-t border-[#7a5240]/10 flex items-center justify-between text-[10px] text-[#7a5240]/70 font-mono">

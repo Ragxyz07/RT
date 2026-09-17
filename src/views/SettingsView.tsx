@@ -149,7 +149,7 @@ export const SettingsView: React.FC = () => {
     showToast('Profile Updated', 'Profile and relationship dates updated successfully ❤️', 'info');
   };
 
-  const handlePasswordChange = (e: React.FormEvent) => {
+  const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassChangeError('');
     setPassChangeSuccess(false);
@@ -158,8 +158,8 @@ export const SettingsView: React.FC = () => {
       setPassChangeError('Please enter your current password.');
       return;
     }
-    if (!newPassInput || newPassInput.length < 4) {
-      setPassChangeError('New password must be at least 4 characters.');
+    if (!newPassInput || newPassInput.length < 6) {
+      setPassChangeError('New password must be at least 6 characters.');
       return;
     }
     if (newPassInput !== confirmPassInput) {
@@ -167,9 +167,9 @@ export const SettingsView: React.FC = () => {
       return;
     }
 
-    const success = changeUserPassword(currentUser.id, oldPassInput, newPassInput);
+    const success = await changeUserPassword(currentUser.id, oldPassInput, newPassInput);
     if (!success) {
-      setPassChangeError('Current password is incorrect. Verification failed.');
+      setPassChangeError('Failed to update password. Please check your credentials.');
       return;
     }
 

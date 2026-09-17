@@ -6,8 +6,10 @@ import { AmbientAudioController } from './components/AmbientAudioController';
 import { GlassDock } from './components/GlassDock';
 import { Toasts } from './components/Toasts';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { SupabaseConfigError } from './components/SupabaseConfigError';
 
 import { AkraLogin3D } from './components/3d/AkraLogin3D';
+import { ResetPasswordModal } from './components/ResetPasswordModal';
 import { HomeView } from './views/HomeView';
 import { ChatView } from './views/ChatView';
 import { PhotoboothView } from './views/PhotoboothView';
@@ -28,6 +30,8 @@ const MainLayout: React.FC = () => {
       <div className="min-h-screen bg-[#1C1412] text-[#FFF7F2] flex flex-col justify-between">
         <Toasts />
         <OfflineIndicator />
+        <SupabaseConfigError bannerOnly={true} />
+        <ResetPasswordModal />
         <AkraLogin3D />
       </div>
     );
@@ -66,6 +70,8 @@ const MainLayout: React.FC = () => {
     <div className="min-h-screen bg-pink-dusk text-[#5b3a2e] flex flex-col selection:bg-[#ecd0c8] selection:text-[#5b3a2e]">
       <Toasts />
       <OfflineIndicator />
+      <SupabaseConfigError bannerOnly={true} />
+      <ResetPasswordModal />
       <Header />
 
       <main className="flex-1 pb-24 sm:pb-28">

@@ -28,7 +28,6 @@ export interface UserProfile {
   isOnline: boolean;
   lastSeen: string;
   statusMessage?: string;
-  password?: string;
 }
 
 export interface ChatMessage {

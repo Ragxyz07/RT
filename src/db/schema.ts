@@ -149,6 +149,7 @@ export const bucketListItems = pgTable('bucket_list_items', {
   title: text('title').notNull(),
   category: text('category').default('travel'),
   targetDate: text('target_date'),
+  imageUrl: text('image_url'),
   completed: boolean('completed').default(false),
   completedAt: timestamp('completed_at'),
   notes: text('notes'),

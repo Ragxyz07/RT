@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+import { supabase, isSupabaseConfigured, validateImageFile } from './supabase';
 import { api } from '../services/api';
 
 export type StorageBucket = 'akra-vault' | 'akra-photobooth' | 'akra-media';
@@ -17,6 +17,7 @@ export interface UploadResult {
   url: string;
   storagePath: string;
   bucket: StorageBucket;
+  error?: string;
 }
 
 /**
@@ -43,6 +44,14 @@ export async function uploadToSupabaseStorage(
   fileOrBlob: File | Blob,
   options: UploadOptions
 ): Promise<UploadResult> {
+  // Validate file size and mime type before upload attempt
+  const validation = validateImageFile(fileOrBlob);
+  if (!validation.valid) {
+    const errorMsg = validation.error || 'Invalid file format or size.';
+    console.error('[Upload Validation Failed]:', errorMsg);
+    throw new Error(errorMsg);
+  }
+
   const bucket = options.bucket;
   const folder = options.folder || (bucket === 'akra-vault' ? 'vault' : bucket === 'akra-photobooth' ? 'photobooth' : 'uploads');
   const ext = fileOrBlob.type.includes('png') ? '.png' : fileOrBlob.type.includes('webp') ? '.webp' : '.jpg';
@@ -117,6 +126,10 @@ export async function uploadToSupabaseStorage(
     caption: options.caption,
     category: options.category,
   });
+
+  if (!serverRes.success) {
+    throw new Error(serverRes.error || 'Failed to upload file to storage.');
+  }
 
   return {
     success: serverRes.success,

@@ -268,6 +268,7 @@ export const api = {
       storagePath: string;
       bucket: string;
       filename: string;
+      error?: string;
     }>('/api/upload', {
       method: 'POST',
       body: formData,

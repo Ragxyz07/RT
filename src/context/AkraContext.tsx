@@ -29,6 +29,14 @@ import {
   initialFutureItems,
   initialMovies
 } from '../data/initialData';
+import {
+  sanitizeText,
+  validateChatMessage,
+  validateLetterInput,
+  validateTimelineInput,
+  validateBucketListInput,
+  validateMemoryInput,
+} from '../utils/sanitize';
 
 interface ToastNotification {
   id: string;
@@ -42,8 +50,12 @@ interface AkraContextType {
   activeTab: NavigationTab;
   setActiveTab: (tab: NavigationTab) => void;
   isAuthenticated: boolean;
-  login: (email: string, pass: string, asPartner?: 'user_leo' | 'user_maya' | 'leo' | 'maya') => boolean;
-  logout: () => void;
+  isAuthLoading: boolean;
+  isPasswordRecovery: boolean;
+  setIsPasswordRecovery: (value: boolean) => void;
+  sendPasswordResetEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
+  login: (emailOrNickname: string, pass: string, asPartner?: 'user_leo' | 'user_maya' | 'leo' | 'maya') => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
   isPartnerConnected: boolean;
   connectPartner: (code: string) => boolean;
   
@@ -54,7 +66,7 @@ interface AkraContextType {
   userMaya: UserProfile;
   switchActiveUser: () => void;
   updateCurrentUserProfile: (updates: Partial<UserProfile>) => void;
-  changeUserPassword: (userId: 'user_leo' | 'user_maya', oldPass: string, newPass: string) => boolean;
+  changeUserPassword: (userId: string, oldPass: string, newPass: string) => Promise<boolean>;
   
   // Relationship
   relationship: RelationshipInfo;
@@ -169,7 +181,22 @@ const saveStorage = <T,>(key: string, value: T): void => {
 export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Navigation & Auth
   const [activeTab, setActiveTab] = useState<NavigationTab>('home');
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => loadStorage('auth', true));
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      return Object.keys(localStorage).some(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
+    } catch {
+      return false;
+    }
+  });
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState<boolean>(() => {
+    try {
+      const hash = window.location.hash || '';
+      return hash.includes('type=recovery') || (hash.includes('access_token=') && hash.includes('type=recovery'));
+    } catch {
+      return false;
+    }
+  });
   const [isPartnerConnected, setIsPartnerConnected] = useState<boolean>(() => loadStorage('partner_connected', true));
   const [activeUserId, setActiveUserId] = useState<'user_leo' | 'user_maya'>(() => loadStorage('active_user_id', 'user_leo'));
 
@@ -202,12 +229,29 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Relationship info
   const [relationship, setRelationship] = useState<RelationshipInfo>(() => loadStorage('relationship', initialRelationship));
 
-  // Chat
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => loadStorage('chat_messages', initialChatMessages));
+  // Helper to remove any test/seed items from previous local runs
+  const filterTestSeedData = <T extends { id?: string }>(items: T[]): T[] => {
+    const dummyIds = new Set([
+      'msg_1', 'msg_2', 'msg_3', 'msg_4',
+      'vlt_1', 'vlt_2', 'vlt_3', 'vlt_4',
+      'mem_1', 'mem_2', 'mem_3', 'mem_4',
+      'let_1', 'let_2', 'let_3',
+      'mil_1', 'mil_2', 'mil_3', 'mil_4',
+      'fut_1', 'fut_2', 'fut_3', 'fut_4',
+    ]);
+    return (items || []).filter(item => item && item.id && !dummyIds.has(item.id));
+  };
+
+  // Chat - only load saved messages or empty array
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
+    return filterTestSeedData(loadStorage('chat_messages', []));
+  });
   const [isPartnerTyping, setIsPartnerTyping] = useState<boolean>(false);
 
-  // Vault
-  const [vaultItems, setVaultItems] = useState<VaultItem[]>(() => loadStorage('vault_items', initialVaultItems));
+  // Vault - only load saved vault items or empty array
+  const [vaultItems, setVaultItems] = useState<VaultItem[]>(() => {
+    return filterTestSeedData(loadStorage('vault_items', []));
+  });
   const [isVaultUnlocked, setIsVaultUnlocked] = useState<boolean>(false);
 
   // Movie Night
@@ -224,11 +268,19 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadStorage('movie_chat', [])
   );
 
-  // Memories, Letters, Timeline, Future
-  const [memories, setMemories] = useState<Memory[]>(() => loadStorage('memories', initialMemories));
-  const [letters, setLetters] = useState<Letter[]>(() => loadStorage('letters', initialLetters));
-  const [milestones, setMilestones] = useState<Milestone[]>(() => loadStorage('milestones', initialMilestones));
-  const [futureItems, setFutureItems] = useState<FutureItem[]>(() => loadStorage('future_items', initialFutureItems));
+  // Memories, Letters, Timeline, Future - clean slate for the couple
+  const [memories, setMemories] = useState<Memory[]>(() => {
+    return filterTestSeedData(loadStorage('memories', []));
+  });
+  const [letters, setLetters] = useState<Letter[]>(() => {
+    return filterTestSeedData(loadStorage('letters', []));
+  });
+  const [milestones, setMilestones] = useState<Milestone[]>(() => {
+    return filterTestSeedData(loadStorage('milestones', []));
+  });
+  const [futureItems, setFutureItems] = useState<FutureItem[]>(() => {
+    return filterTestSeedData(loadStorage('future_items', []));
+  });
 
   // Typography & Visibility (Defaults to standard clean text & elegant romantic serif)
   const [fontFamily, setFontFamily] = useState<FontChoice>(() => loadStorage('font_family', 'playfair'));
@@ -368,6 +420,9 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else if (type === 'location_sharing_toggle') {
         const isLeo = data.userId === 'ragul_mama';
         const isSharing = !!data.isSharingEnabled;
+        const partnerName = isLeo ? 'Mama' : 'Akshu';
+        const isSelf = (isLeo && activeUserId === 'user_leo') || (!isLeo && activeUserId === 'user_maya');
+
         if (isLeo) {
           setUserLeo(prev => ({
             ...prev,
@@ -381,6 +436,10 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
             lastLocationUpdate: new Date().toISOString(),
           }));
         }
+
+        if (isSharing && !isSelf) {
+          showToast('📍 Live Location Connected', `${partnerName} turned on live location sharing.`, 'info');
+        }
       } else if (type === 'partner_presence') {
         const isLeo = data.userId === 'ragul_mama';
         if (isLeo) {
@@ -389,17 +448,67 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUserMaya(prev => ({ ...prev, isOnline: !!data.isOnline }));
         }
       } else if (type === 'new_memory') {
+        const author = data.uploadedByName || (data.creatorId === 'ragul_mama' ? 'Mama' : 'Akshu');
+        const isSelf = (data.creatorId === 'ragul_mama' && activeUserId === 'user_leo') ||
+                       (data.creatorId === 'akshu_akshya' && activeUserId === 'user_maya');
         setMemories(prev => {
           if (prev.some(m => m.id === data.id)) return prev;
           return [data, ...prev];
         });
+        if (!isSelf) {
+          showToast('📸 New Memory Added', `${author} added "${data.title || 'a new photo'}" to your shelf.`, 'photo');
+        }
       } else if (type === 'new_letter') {
+        const author = data.authorName || (data.senderId === 'ragul_mama' ? 'Mama' : 'Akshu');
+        const isSelf = (data.senderId === 'ragul_mama' && activeUserId === 'user_leo') ||
+                       (data.senderId === 'akshu_akshya' && activeUserId === 'user_maya');
         setLetters(prev => {
           if (prev.some(l => l.id === data.id)) return prev;
           return [data, ...prev];
         });
-      } else if (type === 'movie_sync') {
-        setWatchRoom(prev => ({ ...prev, ...data }));
+        if (!isSelf) {
+          showToast('💌 New Letter Received', `${author} placed a sealed letter for you.`, 'letter');
+        }
+      } else if (type === 'movie_sync' || type === 'movie_session' || type === 'movie_session_sync') {
+        const updater = data.updatedBy || data.startedBy || 'Partner';
+        const isSelf = (updater === 'Ragul' && activeUserId === 'user_leo') ||
+                       (updater === 'Akshya' && activeUserId === 'user_maya');
+        setWatchRoom(prev => {
+          const nextPlaying = data.isPlaying ?? data.is_playing ?? prev.isPlaying;
+          if (nextPlaying && !prev.isPlaying && !isSelf) {
+            showToast('🎬 Movie Night Started', `${updater} started a watch session!`, 'movie');
+          }
+          return {
+            ...prev,
+            isPlaying: nextPlaying,
+            currentTime: data.currentTime ?? data.current_time ?? prev.currentTime,
+            currentMovieId: data.currentMovieId || data.id || prev.currentMovieId,
+            updatedBy: updater,
+            updatedAt: Date.now(),
+          };
+        });
+      } else if (type === 'new_bucket_item') {
+        setFutureItems(prev => {
+          if (prev.some(f => f.id === data.id)) return prev;
+          const mappedItem: FutureItem = {
+            id: data.id,
+            title: data.title,
+            category: data.category || 'places',
+            targetDate: data.targetDate,
+            imageUrl: data.imageUrl,
+            completed: !!data.completed,
+            notes: data.notes || '',
+            suggestedBy: data.createdBy === 'ragul_mama' ? 'user_leo' : 'user_maya',
+            suggestedByName: data.suggestedByName || 'Mama',
+          };
+          return [mappedItem, ...prev];
+        });
+      } else if (type === 'update_bucket_item') {
+        setFutureItems(prev =>
+          prev.map(f => (f.id === data.id ? { ...f, ...data } : f))
+        );
+      } else if (type === 'delete_bucket_item') {
+        setFutureItems(prev => prev.filter(f => f.id !== data.id));
       }
     });
 
@@ -407,6 +516,98 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
       unsubscribe();
     };
   }, [activeUserId, showToast]);
+
+  // Real Supabase Auth Session Persistence & Token Synchronization (persists across refresh)
+  useEffect(() => {
+    let isMounted = true;
+
+    const applySupabaseSession = (session: any) => {
+      if (!session?.user) {
+        setIsAuthenticated(false);
+        setAuthToken('');
+        return;
+      }
+
+      const user = session.user;
+      const userEmail = (user.email || '').toLowerCase();
+      const metaName = (user.user_metadata?.name || '').toLowerCase();
+      const metaNick = (user.user_metadata?.nickname || '').toLowerCase();
+
+      const isMama =
+        userEmail === 'ragultheking0007@gmail.com' ||
+        userEmail.startsWith('ragul') ||
+        metaNick === 'mama' ||
+        metaName === 'ragul';
+
+      if (isMama) {
+        setActiveUserId('user_leo');
+        setUserLeo(prev => ({
+          ...prev,
+          id: user.id,
+          email: user.email || prev.email,
+          name: user.user_metadata?.name || prev.name,
+          nickname: user.user_metadata?.nickname || prev.nickname,
+        }));
+      } else {
+        setActiveUserId('user_maya');
+        setUserMaya(prev => ({
+          ...prev,
+          id: user.id,
+          email: user.email || prev.email,
+          name: user.user_metadata?.name || prev.name,
+          nickname: user.user_metadata?.nickname || prev.nickname,
+        }));
+      }
+
+      if (session.access_token) {
+        setAuthToken(session.access_token);
+      }
+      setIsAuthenticated(true);
+    };
+
+    if (isSupabaseConfigured) {
+      // 1. Initial check of existing session (restores session JWT on page load/refresh)
+      supabase.auth.getSession().then(({ data: { session }, error }) => {
+        if (!isMounted) return;
+        if (error) {
+          console.error('[AKRA Supabase Auth] Session restore error:', error);
+          setIsAuthenticated(false);
+        } else if (session?.user) {
+          applySupabaseSession(session);
+        } else {
+          setIsAuthenticated(false);
+        }
+        setIsAuthLoading(false);
+      }).catch(() => {
+        if (isMounted) {
+          setIsAuthenticated(false);
+          setIsAuthLoading(false);
+        }
+      });
+
+      // 2. Realtime listener for Auth changes (login, logout, token refresh across tabs, password recovery)
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+        if (!isMounted) return;
+        if (event === 'PASSWORD_RECOVERY') {
+          setIsPasswordRecovery(true);
+          if (session) applySupabaseSession(session);
+        } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+          if (session) applySupabaseSession(session);
+        } else if (event === 'SIGNED_OUT' || !session) {
+          setIsAuthenticated(false);
+          setAuthToken('');
+        }
+      });
+
+      return () => {
+        isMounted = false;
+        subscription.unsubscribe();
+      };
+    } else {
+      setIsAuthLoading(false);
+      setIsAuthenticated(false);
+    }
+  }, []);
 
   // Initial fetch from PostgreSQL backend
   useEffect(() => {
@@ -523,6 +724,50 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }).catch(() => {});
 
+    // Fetch timeline events
+    api.getTimeline().then(events => {
+      if (events && Array.isArray(events) && events.length > 0) {
+        setMilestones(prev => {
+          const ids = new Set(prev.map(m => m.id));
+          const newEvents = events
+            .filter(e => e && e.id && !ids.has(e.id))
+            .map(e => ({
+              id: e.id,
+              title: e.title,
+              date: e.date,
+              description: e.description || '',
+              category: e.category || 'Milestone',
+              photoUrl: e.imageUrl,
+              iconType: e.icon || 'heart',
+            }));
+          return [...newEvents, ...prev];
+        });
+      }
+    }).catch(() => {});
+
+    // Fetch bucket list items
+    api.getBucketList().then(items => {
+      if (items && Array.isArray(items) && items.length > 0) {
+        setFutureItems(prev => {
+          const ids = new Set(prev.map(i => i.id));
+          const newItems = items
+            .filter(i => i && i.id && !ids.has(i.id))
+            .map(i => ({
+              id: i.id,
+              title: i.title,
+              category: i.category || 'travel',
+              targetDate: i.targetDate,
+              imageUrl: i.imageUrl || i.image_url,
+              completed: !!i.completed,
+              notes: i.notes || '',
+              suggestedBy: i.createdBy === 'ragul_mama' ? 'user_leo' : 'user_maya',
+              suggestedByName: i.suggestedByName || 'Mama',
+            }));
+          return [...newItems, ...prev];
+        });
+      }
+    }).catch(() => {});
+
     // Fetch live location
     api.getLocationData().then(locData => {
       if (locData) {
@@ -625,104 +870,159 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [activeUserId]);
 
-  // Auth Functions
-  const login = (emailOrName: string, pass: string, asPartner?: 'user_leo' | 'user_maya' | 'leo' | 'maya') => {
-    const targetKey = asPartner === 'leo' ? 'user_leo' : asPartner === 'maya' ? 'user_maya' : asPartner;
+  // Auth Functions (Backed by real Supabase Auth signInWithPassword and JWT sessions)
+  const login = async (
+    emailOrName: string,
+    pass: string,
+    asPartner?: 'user_leo' | 'user_maya' | 'leo' | 'maya'
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!isSupabaseConfigured) {
+      return {
+        success: false,
+        error: 'Supabase is not configured. Please supply VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.',
+      };
+    }
+
     const cleanInput = (emailOrName || '').trim().toLowerCase();
+    const cleanPass = (pass || '').trim();
 
-    // Credentials login by matching Ragul (mama)
+    if (!cleanPass) {
+      return { success: false, error: 'Please enter your password.' };
+    }
+
+    // Resolve target email for Mama or Akshu
+    let targetEmail = cleanInput;
     if (
-      targetKey === 'user_leo' ||
-      cleanInput === userLeo.email.toLowerCase() ||
-      cleanInput === userLeo.name.toLowerCase() ||
-      cleanInput === (userLeo.nickname || '').toLowerCase() ||
-      cleanInput === 'ragultheking0007@gmail.com' ||
-      cleanInput === 'ragul' ||
+      asPartner === 'user_leo' ||
+      asPartner === 'leo' ||
       cleanInput === 'mama' ||
-      cleanInput === 'leo'
+      cleanInput === 'ragul' ||
+      cleanInput.includes('mama')
     ) {
-      const correctPass = userLeo.password || 'mama123';
-      if (pass === correctPass || pass === 'mama123' || pass === 'ragul123' || pass === 'leo123') {
-        setActiveUserId('user_leo');
-        setIsAuthenticated(true);
-        setIsVaultUnlocked(false);
-        // Connect backend session
-        api.login('Mama', pass).then(res => {
-          if (res?.token) realtimeClient.connect('ragul_mama');
-        }).catch(() => {});
-        if (isSupabaseConfigured) {
-          supabase.auth.signInWithPassword({
-            email: 'ragultheking0007@gmail.com',
-            password: 'Password123!',
-          }).catch(() => {});
-        }
-        showToast('Welcome back mama ❤️', `Logged in as ${userLeo.name} (${userLeo.nickname})`);
-        return true;
-      }
-      return false;
-    }
-
-    // Credentials login by matching Akshya (akshu)
-    if (
-      targetKey === 'user_maya' ||
-      cleanInput === userMaya.email.toLowerCase() ||
-      cleanInput === userMaya.name.toLowerCase() ||
-      cleanInput === (userMaya.nickname || '').toLowerCase() ||
-      cleanInput === 'akshya' ||
+      targetEmail = 'ragultheking0007@gmail.com';
+    } else if (
+      asPartner === 'user_maya' ||
+      asPartner === 'maya' ||
       cleanInput === 'akshu' ||
-      cleanInput === 'maya'
+      cleanInput === 'akshya' ||
+      cleanInput.includes('akshu')
     ) {
-      const correctPass = userMaya.password || 'akshu123';
-      if (pass === correctPass || pass === 'akshu123' || pass === 'akshya123' || pass === 'maya123') {
-        setActiveUserId('user_maya');
-        setIsAuthenticated(true);
-        setIsVaultUnlocked(false);
-        // Connect backend session
-        api.login('Akshu', pass).then(res => {
-          if (res?.token) realtimeClient.connect('akshu_akshya');
-        }).catch(() => {});
-        if (isSupabaseConfigured) {
-          supabase.auth.signInWithPassword({
-            email: 'akshya@akra.love',
-            password: 'Password123!',
-          }).catch(() => {});
-        }
-        showToast('Welcome back akshu 🌸', `Logged in as ${userMaya.name} (${userMaya.nickname})`);
-        return true;
+      targetEmail = 'akshya@akra.love';
+    }
+
+    if (!targetEmail || !targetEmail.includes('@')) {
+      return { success: false, error: 'Please select Mama or Akshu, or enter a valid email.' };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: targetEmail,
+        password: cleanPass,
+      });
+
+      if (error || !data.session) {
+        return {
+          success: false,
+          error: error?.message || 'Invalid credentials. Please check your password.',
+        };
       }
-      return false;
-    }
 
-    return false;
+      // Supabase JWT session persistence
+      if (data.session.access_token) {
+        setAuthToken(data.session.access_token);
+      }
+
+      const user = data.user;
+      const userEmail = (user.email || '').toLowerCase();
+      const isMama =
+        userEmail === 'ragultheking0007@gmail.com' ||
+        userEmail.startsWith('ragul') ||
+        (user.user_metadata?.nickname || '').toLowerCase() === 'mama';
+
+      if (isMama) {
+        setActiveUserId('user_leo');
+        setUserLeo(prev => ({
+          ...prev,
+          id: user.id,
+          email: user.email || prev.email,
+          name: user.user_metadata?.name || prev.name,
+          nickname: user.user_metadata?.nickname || prev.nickname,
+        }));
+        showToast('Welcome back Mama ❤️', `Signed in as ${user.user_metadata?.name || 'Ragul'}`);
+      } else {
+        setActiveUserId('user_maya');
+        setUserMaya(prev => ({
+          ...prev,
+          id: user.id,
+          email: user.email || prev.email,
+          name: user.user_metadata?.name || prev.name,
+          nickname: user.user_metadata?.nickname || prev.nickname,
+        }));
+        showToast('Welcome back Akshu 🌸', `Signed in as ${user.user_metadata?.name || 'Akshya'}`);
+      }
+
+      setIsAuthenticated(true);
+      setIsVaultUnlocked(false);
+      return { success: true };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Authentication failed. Please try again.',
+      };
+    }
   };
 
-  const changeUserPassword = (userId: 'user_leo' | 'user_maya', oldPass: string, newPass: string) => {
-    const target = userId === 'user_leo' ? userLeo : userMaya;
-    const currentPass = target.password || (userId === 'user_leo' ? 'mama123' : 'akshu123');
-    if (oldPass !== currentPass) {
-      showToast('Password Error', 'Current password does not match.', 'info');
+  const changeUserPassword = async (_userId: string, _oldPass: string, newPass: string): Promise<boolean> => {
+    if (newPass.length < 6) {
+      showToast('Password Error', 'New password must be at least 6 characters.', 'info');
       return false;
     }
-    if (newPass.length < 4) {
-      showToast('Password Error', 'New password must be at least 4 characters.', 'info');
-      return false;
-    }
-    if (userId === 'user_leo') {
-      setUserLeo(prev => ({ ...prev, password: newPass }));
+
+    if (isSupabaseConfigured) {
+      const { error } = await supabase.auth.updateUser({ password: newPass });
+      if (error) {
+        showToast('Password Error', error.message, 'info');
+        return false;
+      }
+      showToast('Password Updated', 'Your Supabase Auth password has been updated! ✨', 'love');
+      return true;
     } else {
-      setUserMaya(prev => ({ ...prev, password: newPass }));
+      showToast('Configuration Error', 'Supabase is not configured to update passwords.', 'info');
+      return false;
     }
-    showToast('Password Updated', `New private password saved for ${target.name} ✨`, 'love');
-    return true;
   };
 
-  const logout = () => {
+  const sendPasswordResetEmail = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    if (!isSupabaseConfigured) {
+      return { success: false, error: 'Supabase is not configured.' };
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const redirectUrl = window.location.origin;
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: redirectUrl,
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to send reset link.' };
+    }
+  };
+
+  const logout = async () => {
     setIsAuthenticated(false);
     setIsVaultUnlocked(false);
+    setAuthToken('');
     if (isSupabaseConfigured) {
-      supabase.auth.signOut().catch(() => {});
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.error('Error during Supabase signOut:', err);
+      }
     }
-    showToast('Logged out', 'Your private space is locked.', 'info');
+    showToast('Logged out', 'Your private sanctuary session has been securely closed.', 'info');
   };
 
   const connectPartner = (code: string) => {
@@ -789,13 +1089,26 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
     voiceDuration?: number,
     replyTo?: ChatMessage
   ) => {
+    const rawText = (text || '').trim();
+    if (type === 'text') {
+      const validation = validateChatMessage(rawText);
+      if (!validation.isValid) {
+        showToast('Message Notice', validation.error || 'Message cannot be empty.', 'info');
+        return;
+      }
+    } else if (!mediaUrl && !rawText) {
+      showToast('Message Notice', 'Please provide an attachment or note.', 'info');
+      return;
+    }
+
+    const cleanText = type === 'text' ? sanitizeText(rawText) : rawText;
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const newMsg: ChatMessage = {
       id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
       senderId: currentUser.id,
       senderName: currentUser.nickname || currentUser.name,
-      text: text.trim(),
+      text: cleanText,
       timestamp: timeStr,
       type,
       mediaUrl,
@@ -813,10 +1126,12 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Save to Cloud SQL PostgreSQL backend
     api.sendMessage({
-      text: text.trim(),
+      text: cleanText,
       imageUrl: mediaUrl,
       attachmentType: type,
-    }).catch(() => {});
+    }).catch(err => {
+      console.warn('Failed to sync message to backend:', err);
+    });
   };
 
   const deleteChatMessage = (id: string) => {
@@ -1136,28 +1451,40 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Memories
   const addMemory = (memory: Omit<Memory, 'id' | 'likes' | 'likedByYou' | 'comments' | 'uploadedBy' | 'uploadedByName'>) => {
+    const validation = validateMemoryInput(memory.title, memory.description, memory.location);
+    if (!validation.isValid) {
+      showToast('Memory Notice', validation.error || 'Please provide a valid title.', 'info');
+      return;
+    }
+
     const newMem: Memory = {
       ...memory,
+      title: validation.title,
+      description: validation.story,
+      location: validation.location,
       id: 'mem_' + Date.now(),
       likes: 1,
       likedByYou: true,
       comments: [],
       uploadedBy: currentUser.id,
-      uploadedByName: currentUser.name,
+      uploadedByName: currentUser.nickname || currentUser.name,
     };
     setMemories(prev => [newMem, ...prev]);
     broadcastEvent('NEW_MEMORY', newMem);
     // Persist to Cloud SQL PostgreSQL
     api.addMemory({
-      title: memory.title,
-      description: memory.description,
-      date: memory.date,
-      year: memory.year,
-      location: memory.location,
-      imageUrl: memory.imageUrl,
-      tags: memory.tags,
-      photoType: memory.photoType,
-    }).catch(() => {});
+      title: newMem.title,
+      description: newMem.description,
+      date: newMem.date,
+      year: newMem.year,
+      location: newMem.location,
+      imageUrl: newMem.imageUrl,
+      tags: newMem.tags,
+      photoType: newMem.photoType,
+    }).catch(err => {
+      console.warn('Failed to sync memory to server:', err);
+      showToast('Sync Notice', 'Memory saved locally. Cloud sync pending.', 'info');
+    });
     showToast('Memory Saved 📸', 'Added to your shared relationship gallery.');
   };
 
@@ -1178,7 +1505,9 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const deleteMemory = (id: string) => {
     setMemories(prev => prev.filter(m => m.id !== id));
     broadcastEvent('DELETE_MEMORY', { id });
-    api.deleteMemory(id).catch(() => {});
+    api.deleteMemory(id).catch(err => {
+      console.warn('Failed to delete memory on server:', err);
+    });
     showToast('Frame Removed', 'Memory was removed from the shelf.', 'info');
   };
 
@@ -1199,12 +1528,14 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const addCommentToMemory = (id: string, text: string) => {
-    if (!text.trim()) return;
+    const trimmed = (text || '').trim();
+    if (!trimmed) return;
+    const cleanComment = sanitizeText(trimmed).slice(0, 500);
     const newComment = {
       id: 'c_' + Date.now(),
       authorId: currentUser.id,
-      authorName: currentUser.name,
-      text: text.trim(),
+      authorName: currentUser.nickname || currentUser.name,
+      text: cleanComment,
       timestamp: 'Just now',
     };
     setMemories(prev =>
@@ -1213,31 +1544,44 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Letters
-  const addLetter = (letter: Omit<Letter, 'id' | 'createdAt' | 'authorId' | 'authorName'>) => {
+  const addLetter = (letter: Omit<Letter, 'id' | 'createdAt' | 'authorId' | 'authorName' | 'isRead'>) => {
+    const validation = validateLetterInput(letter.title, letter.content);
+    if (!validation.isValid) {
+      showToast('Letter Notice', validation.error || 'Please fill in title and message.', 'info');
+      return;
+    }
+
     const newLetter: Letter = {
       ...letter,
+      title: validation.title,
+      content: validation.content,
       id: 'let_' + Date.now(),
       createdAt: new Date().toISOString(),
       authorId: currentUser.id,
-      authorName: currentUser.name,
+      authorName: currentUser.nickname || currentUser.name,
       isRead: false,
     };
     setLetters(prev => [newLetter, ...prev]);
     broadcastEvent('NEW_LETTER', newLetter);
     api.addLetter({
-      title: letter.title,
-      content: letter.content,
-      stamp: letter.stamp,
-      waxSeal: letter.waxSeal,
-      paperStyle: letter.paperStyle,
-      scheduledFor: letter.scheduledFor,
-    }).catch(() => {});
+      title: newLetter.title,
+      content: newLetter.content,
+      stamp: newLetter.stamp,
+      waxSeal: newLetter.waxSeal,
+      paperStyle: newLetter.paperStyle,
+      scheduledFor: newLetter.scheduledFor,
+    }).catch(err => {
+      console.warn('Failed to sync letter to server:', err);
+      showToast('Sync Notice', 'Letter sealed locally. Cloud sync pending.', 'info');
+    });
     showToast('Letter Sealed 💌', `Left in AKRA for ${partnerUser.name} to open.`);
   };
 
   const markLetterRead = (id: string) => {
     setLetters(prev => prev.map(l => (l.id === id ? { ...l, isRead: true } : l)));
-    api.openLetter(id).catch(() => {});
+    api.openLetter(id).catch(err => {
+      console.warn('Failed to mark letter opened:', err);
+    });
   };
 
   const updateLetter = (id: string, updated: Partial<Letter>) => {
@@ -1262,8 +1606,17 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Timeline
   const addMilestone = (milestone: Omit<Milestone, 'id'>) => {
+    const validation = validateTimelineInput(milestone.title, milestone.description, milestone.date);
+    if (!validation.isValid) {
+      showToast('Milestone Notice', validation.error || 'Please fill in milestone details.', 'info');
+      return;
+    }
+
     const newM: Milestone = {
       ...milestone,
+      title: validation.title,
+      description: validation.description,
+      date: validation.date,
       id: 'mile_' + Date.now(),
     };
     setMilestones(prev => [...prev, newM]);
@@ -1277,7 +1630,10 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
       imageUrl: newM.photoUrl,
       category: 'Milestone',
       icon: newM.iconType || 'heart',
-    }).catch(err => console.warn('Failed to sync milestone to timeline_events:', err));
+    }).catch(err => {
+      console.warn('Failed to sync milestone to timeline_events:', err);
+      showToast('Sync Notice', 'Milestone saved locally. Cloud sync pending.', 'info');
+    });
   };
 
   const updateMilestone = (id: string, updated: Partial<Milestone>) => {
@@ -1289,7 +1645,9 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const deleteMilestone = (id: string) => {
     setMilestones(prev => prev.filter(m => m.id !== id));
-    api.deleteTimelineEvent(id).catch(() => {});
+    api.deleteTimelineEvent(id).catch(err => {
+      console.warn('Failed to delete timeline event on server:', err);
+    });
     showToast('Milestone Removed', 'Removed from timeline.', 'info');
   };
 
@@ -1311,14 +1669,35 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const addFutureItem = (item: Omit<FutureItem, 'id' | 'completed' | 'suggestedBy' | 'suggestedByName'>) => {
+    const validation = validateBucketListInput(item.title, item.notes, item.category);
+    if (!validation.isValid) {
+      showToast('Bucket List Notice', validation.error || 'Please provide a title.', 'info');
+      return;
+    }
+
     const newItem: FutureItem = {
       ...item,
+      title: validation.title,
+      notes: validation.notes,
+      category: validation.category,
+      imageUrl: item.imageUrl,
+      targetDate: item.targetDate,
       id: 'fut_' + Date.now(),
       completed: false,
       suggestedBy: currentUser.id,
-      suggestedByName: currentUser.name,
+      suggestedByName: currentUser.nickname || currentUser.name,
     };
     setFutureItems(prev => [newItem, ...prev]);
+    api.addBucketItem({
+      title: newItem.title,
+      category: newItem.category,
+      targetDate: newItem.targetDate,
+      notes: newItem.notes,
+      imageUrl: newItem.imageUrl,
+    }).catch(err => {
+      console.warn('Failed to sync bucket list item:', err);
+      showToast('Sync Notice', 'Item saved locally. Cloud sync pending.', 'info');
+    });
     showToast('Added to Bucket List ✈️', 'A new dream to look forward to together.');
   };
 
@@ -1326,11 +1705,17 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setFutureItems(prev =>
       prev.map(f => (f.id === id ? { ...f, ...updated } : f))
     );
+    api.updateBucketItem(id, updated).catch(err => {
+      console.warn('Failed to sync updated bucket list item:', err);
+    });
     showToast('Dream Updated ✨', 'Bucket list item updated.');
   };
 
   const deleteFutureItem = (id: string) => {
     setFutureItems(prev => prev.filter(f => f.id !== id));
+    api.deleteBucketItem(id).catch(err => {
+      console.warn('Failed to delete bucket list item on server:', err);
+    });
     showToast('Dream Removed', 'Removed from bucket list.', 'info');
   };
 
@@ -1356,6 +1741,10 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
         activeTab,
         setActiveTab,
         isAuthenticated,
+        isAuthLoading,
+        isPasswordRecovery,
+        setIsPasswordRecovery,
+        sendPasswordResetEmail,
         login,
         logout,
         isPartnerConnected,

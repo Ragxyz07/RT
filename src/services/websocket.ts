@@ -103,6 +103,24 @@ class AkraRealtimeClient {
               });
             }
           )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'movie_sessions' },
+            (payload) => {
+              const row: any = payload.new;
+              if (row) {
+                this.emit('movie_session_sync', {
+                  id: row.id,
+                  title: row.title,
+                  videoUrl: row.video_url,
+                  isPlaying: row.is_playing,
+                  currentTime: row.current_time,
+                  startedBy: row.started_by,
+                  updatedAt: row.updated_at,
+                });
+              }
+            }
+          )
           .subscribe((status) => {
             if (status === 'SUBSCRIBED') {
               // Connected to Supabase Realtime
