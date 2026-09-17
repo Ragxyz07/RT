@@ -1,6 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Read public Supabase credentials from environment
+// Read public Supabase credentials from environment or local browser override
 const metaEnv = (import.meta as any).env || {};
 
 function cleanSupabaseUrl(url: string): string {
@@ -11,9 +11,33 @@ function cleanSupabaseUrl(url: string): string {
     .replace(/\/+$/, '');
 }
 
-const rawSupabaseUrl: string = metaEnv.VITE_SUPABASE_URL || '';
+const getStoredSupabaseConfig = () => {
+  try {
+    const url = localStorage.getItem('akra_custom_supabase_url') || '';
+    const key = localStorage.getItem('akra_custom_supabase_anon_key') || '';
+    return { url, key };
+  } catch {
+    return { url: '', key: '' };
+  }
+};
+
+const storedConfig = typeof window !== 'undefined' ? getStoredSupabaseConfig() : { url: '', key: '' };
+
+const rawSupabaseUrl: string =
+  metaEnv.VITE_SUPABASE_URL ||
+  metaEnv.SUPABASE_URL ||
+  storedConfig.url ||
+  '';
+
 const supabaseUrl: string = cleanSupabaseUrl(rawSupabaseUrl);
-const supabaseAnonKey: string = (metaEnv.VITE_SUPABASE_ANON_KEY || '').trim();
+
+const supabaseAnonKey: string = (
+  metaEnv.VITE_SUPABASE_ANON_KEY ||
+  metaEnv.SUPABASE_ANON_KEY ||
+  metaEnv.VITE_SUPABASE_KEY ||
+  storedConfig.key ||
+  ''
+).trim();
 
 export const isSupabaseConfigured = Boolean(
   supabaseUrl &&
@@ -22,6 +46,26 @@ export const isSupabaseConfigured = Boolean(
   !supabaseUrl.includes('placeholder') &&
   !supabaseUrl.includes('xyzcompany')
 );
+
+export const saveCustomSupabaseConfig = (url: string, key: string) => {
+  try {
+    localStorage.setItem('akra_custom_supabase_url', cleanSupabaseUrl(url));
+    localStorage.setItem('akra_custom_supabase_anon_key', key.trim());
+    window.location.reload();
+  } catch (e) {
+    console.error('Failed to save custom supabase config:', e);
+  }
+};
+
+export const clearCustomSupabaseConfig = () => {
+  try {
+    localStorage.removeItem('akra_custom_supabase_url');
+    localStorage.removeItem('akra_custom_supabase_anon_key');
+    window.location.reload();
+  } catch (e) {
+    console.error('Failed to clear custom supabase config:', e);
+  }
+};
 
 export const supabaseConfigStatus = {
   isConfigured: isSupabaseConfigured,
