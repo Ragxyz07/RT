@@ -64,8 +64,8 @@ export const AvatarCropperModal: React.FC<AvatarCropperModalProps> = ({
     const img = imageRef.current;
     if (!img) return;
 
-    const canvas = document.createElement('canvas');
-    const size = 400;
+    // Size 320x320 is ideal for avatars: crisp on retina displays, yet ultra-compact (<30KB) for permanent persistence
+    const size = 320;
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext('2d');
@@ -93,7 +93,9 @@ export const AvatarCropperModal: React.FC<AvatarCropperModalProps> = ({
     ctx.translate(rotatedX * scaleFactor, rotatedY * scaleFactor);
 
     // Draw the image scaled
-    const imgAspect = img.naturalWidth / img.naturalHeight;
+    const naturalWidth = img.naturalWidth || 320;
+    const naturalHeight = img.naturalHeight || 320;
+    const imgAspect = naturalWidth / naturalHeight;
     let drawW: number;
     let drawH: number;
 
@@ -108,15 +110,22 @@ export const AvatarCropperModal: React.FC<AvatarCropperModalProps> = ({
     ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
 
-    canvas.toBlob(
-      async (blob) => {
-        if (!blob) return;
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-        await onSave(blob, dataUrl);
-      },
-      'image/jpeg',
-      0.92
-    );
+    try {
+      canvas.toBlob(
+        async (blob) => {
+          if (!blob) return;
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+          await onSave(blob, dataUrl);
+        },
+        'image/jpeg',
+        0.88
+      );
+    } catch (exportErr) {
+      console.warn('Canvas export tainted or failed, falling back to direct source:', exportErr);
+      // If tainted, fetch original or pass existing
+      const fallbackBlob = await fetch(imageSrc).then(r => r.blob()).catch(() => new Blob());
+      await onSave(fallbackBlob, imageSrc);
+    }
   };
 
   return (
@@ -153,6 +162,7 @@ export const AvatarCropperModal: React.FC<AvatarCropperModalProps> = ({
           <img
             ref={imageRef}
             src={imageSrc}
+            crossOrigin="anonymous"
             alt="Crop target"
             draggable={false}
             style={{

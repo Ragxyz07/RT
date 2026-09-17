@@ -162,6 +162,22 @@ const AkraContext = createContext<AkraContextType | undefined>(undefined);
 
 // LocalStorage Keys
 const STORAGE_PREFIX = 'akra_clean_v5_';
+
+/**
+ * Checks if an avatar URL is one of the initial stock Unsplash placeholders
+ * so user custom photos are never overwritten by defaults.
+ */
+export const isDefaultStockAvatar = (url?: string | null): boolean => {
+  if (!url || typeof url !== 'string') return true;
+  const trimmed = url.trim();
+  if (!trimmed) return true;
+  return (
+    trimmed.includes('photo-1507003211169-0a1dd7228f2d') ||
+    trimmed.includes('photo-1517841905240-472988babdf9') ||
+    trimmed.includes('photo-1494790108377-be9c29b29330')
+  );
+};
+
 const loadStorage = <T,>(key: string, fallback: T): T => {
   try {
     const item = localStorage.getItem(STORAGE_PREFIX + key);
@@ -200,13 +216,27 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isPartnerConnected, setIsPartnerConnected] = useState<boolean>(() => loadStorage('partner_connected', true));
   const [activeUserId, setActiveUserId] = useState<'user_leo' | 'user_maya'>(() => loadStorage('active_user_id', 'user_leo'));
 
-  // Profiles (guaranteeing Ragul & Akshya names, nicknames and locations)
+  // Profiles (guaranteeing Ragul & Akshya names, nicknames, and permanent custom DP)
   const [userLeo, setUserLeo] = useState<UserProfile>(() => {
+    let permanentDp: string | null = null;
+    try {
+      permanentDp = localStorage.getItem('akra_permanent_dp_user_leo');
+    } catch {}
     const saved = loadStorage('user_leo', initialUserLeo);
     const savedAvatar = loadStorage<string | null>('avatar_user_leo', null);
+
+    let chosenAvatar = initialUserLeo.avatar;
+    if (permanentDp && !isDefaultStockAvatar(permanentDp)) {
+      chosenAvatar = permanentDp;
+    } else if (savedAvatar && !isDefaultStockAvatar(savedAvatar)) {
+      chosenAvatar = savedAvatar;
+    } else if (saved.avatar && !isDefaultStockAvatar(saved.avatar)) {
+      chosenAvatar = saved.avatar;
+    }
+
     return {
       ...saved,
-      avatar: savedAvatar || saved.avatar || initialUserLeo.avatar,
+      avatar: chosenAvatar,
       name: 'Ragul',
       nickname: saved.nickname && saved.nickname.toLowerCase() === 'mama' ? 'Mama' : (saved.nickname || 'Mama'),
       city: 'Puducherry',
@@ -214,11 +244,25 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   });
   const [userMaya, setUserMaya] = useState<UserProfile>(() => {
+    let permanentDp: string | null = null;
+    try {
+      permanentDp = localStorage.getItem('akra_permanent_dp_user_maya');
+    } catch {}
     const saved = loadStorage('user_maya', initialUserMaya);
     const savedAvatar = loadStorage<string | null>('avatar_user_maya', null);
+
+    let chosenAvatar = initialUserMaya.avatar;
+    if (permanentDp && !isDefaultStockAvatar(permanentDp)) {
+      chosenAvatar = permanentDp;
+    } else if (savedAvatar && !isDefaultStockAvatar(savedAvatar)) {
+      chosenAvatar = savedAvatar;
+    } else if (saved.avatar && !isDefaultStockAvatar(saved.avatar)) {
+      chosenAvatar = saved.avatar;
+    }
+
     return {
       ...saved,
-      avatar: savedAvatar || saved.avatar || initialUserMaya.avatar,
+      avatar: chosenAvatar,
       name: 'Akshya',
       nickname: saved.nickname && saved.nickname.toLowerCase() === 'akshu' ? 'Akshu' : (saved.nickname || 'Akshu'),
       city: 'Bangalore',
@@ -571,8 +615,19 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isMama) {
         setActiveUserId('user_leo');
         setUserLeo(prev => {
-          const nextAvatar = metaAvatar || loadStorage<string | null>('avatar_user_leo', null) || prev.avatar;
-          if (metaAvatar) saveStorage('avatar_user_leo', metaAvatar);
+          let permanentDp: string | null = null;
+          try { permanentDp = localStorage.getItem('akra_permanent_dp_user_leo'); } catch {}
+
+          let nextAvatar = prev.avatar;
+          if (permanentDp && !isDefaultStockAvatar(permanentDp)) {
+            nextAvatar = permanentDp;
+          } else if (metaAvatar && !isDefaultStockAvatar(metaAvatar)) {
+            nextAvatar = metaAvatar;
+            try { localStorage.setItem('akra_permanent_dp_user_leo', metaAvatar); } catch {}
+          } else if (prev.avatar && !isDefaultStockAvatar(prev.avatar)) {
+            nextAvatar = prev.avatar;
+          }
+          saveStorage('avatar_user_leo', nextAvatar);
           return {
             ...prev,
             id: user.id,
@@ -585,8 +640,19 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         setActiveUserId('user_maya');
         setUserMaya(prev => {
-          const nextAvatar = metaAvatar || loadStorage<string | null>('avatar_user_maya', null) || prev.avatar;
-          if (metaAvatar) saveStorage('avatar_user_maya', nextAvatar);
+          let permanentDp: string | null = null;
+          try { permanentDp = localStorage.getItem('akra_permanent_dp_user_maya'); } catch {}
+
+          let nextAvatar = prev.avatar;
+          if (permanentDp && !isDefaultStockAvatar(permanentDp)) {
+            nextAvatar = permanentDp;
+          } else if (metaAvatar && !isDefaultStockAvatar(metaAvatar)) {
+            nextAvatar = metaAvatar;
+            try { localStorage.setItem('akra_permanent_dp_user_maya', metaAvatar); } catch {}
+          } else if (prev.avatar && !isDefaultStockAvatar(prev.avatar)) {
+            nextAvatar = prev.avatar;
+          }
+          saveStorage('avatar_user_maya', nextAvatar);
           return {
             ...prev,
             id: user.id,
@@ -614,27 +680,49 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   (u.nickname || '').toLowerCase() === 'mama';
 
                 if (isUserMama) {
-                  setUserLeo(prev => ({
-                    ...prev,
-                    id: u.id || prev.id,
-                    name: u.name || prev.name,
-                    nickname: u.nickname || prev.nickname,
-                    avatar: u.avatar || prev.avatar,
-                    city: u.city || prev.city,
-                    bio: u.bio || prev.bio,
-                  }));
-                  if (u.avatar) saveStorage('avatar_user_leo', u.avatar);
+                  setUserLeo(prev => {
+                    let permanent: string | null = null;
+                    try { permanent = localStorage.getItem('akra_permanent_dp_user_leo'); } catch {}
+                    const chosen = (permanent && !isDefaultStockAvatar(permanent))
+                      ? permanent
+                      : (u.avatar && !isDefaultStockAvatar(u.avatar) ? u.avatar : prev.avatar);
+
+                    if (chosen && !isDefaultStockAvatar(chosen)) {
+                      saveStorage('avatar_user_leo', chosen);
+                      try { localStorage.setItem('akra_permanent_dp_user_leo', chosen); } catch {}
+                    }
+                    return {
+                      ...prev,
+                      id: u.id || prev.id,
+                      name: u.name || prev.name,
+                      nickname: u.nickname || prev.nickname,
+                      avatar: chosen,
+                      city: u.city || prev.city,
+                      bio: u.bio || prev.bio,
+                    };
+                  });
                 } else {
-                  setUserMaya(prev => ({
-                    ...prev,
-                    id: u.id || prev.id,
-                    name: u.name || prev.name,
-                    nickname: u.nickname || prev.nickname,
-                    avatar: u.avatar || prev.avatar,
-                    city: u.city || prev.city,
-                    bio: u.bio || prev.bio,
-                  }));
-                  if (u.avatar) saveStorage('avatar_user_maya', u.avatar);
+                  setUserMaya(prev => {
+                    let permanent: string | null = null;
+                    try { permanent = localStorage.getItem('akra_permanent_dp_user_maya'); } catch {}
+                    const chosen = (permanent && !isDefaultStockAvatar(permanent))
+                      ? permanent
+                      : (u.avatar && !isDefaultStockAvatar(u.avatar) ? u.avatar : prev.avatar);
+
+                    if (chosen && !isDefaultStockAvatar(chosen)) {
+                      saveStorage('avatar_user_maya', chosen);
+                      try { localStorage.setItem('akra_permanent_dp_user_maya', chosen); } catch {}
+                    }
+                    return {
+                      ...prev,
+                      id: u.id || prev.id,
+                      name: u.name || prev.name,
+                      nickname: u.nickname || prev.nickname,
+                      avatar: chosen,
+                      city: u.city || prev.city,
+                      bio: u.bio || prev.bio,
+                    };
+                  });
                 }
               });
             }
@@ -701,20 +789,34 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const p = res.partner;
         const isUserMama = u.uid === 'ragul_mama' || (u.email || '').toLowerCase() === 'ragultheking0007@gmail.com';
         if (isUserMama) {
-          if (u.avatar) {
-            setUserLeo(prev => ({ ...prev, avatar: u.avatar, name: u.name || prev.name, nickname: u.nickname || prev.nickname }));
-            saveStorage('avatar_user_leo', u.avatar);
+          let permanent: string | null = null;
+          try { permanent = localStorage.getItem('akra_permanent_dp_user_leo'); } catch {}
+          const chosen = (permanent && !isDefaultStockAvatar(permanent))
+            ? permanent
+            : (u.avatar && !isDefaultStockAvatar(u.avatar) ? u.avatar : null);
+
+          if (chosen) {
+            setUserLeo(prev => ({ ...prev, avatar: chosen, name: u.name || prev.name, nickname: u.nickname || prev.nickname }));
+            saveStorage('avatar_user_leo', chosen);
+            try { localStorage.setItem('akra_permanent_dp_user_leo', chosen); } catch {}
           }
-          if (p?.avatar) {
+          if (p?.avatar && !isDefaultStockAvatar(p.avatar)) {
             setUserMaya(prev => ({ ...prev, avatar: p.avatar, name: p.name || prev.name, nickname: p.nickname || prev.nickname }));
             saveStorage('avatar_user_maya', p.avatar);
           }
         } else {
-          if (u.avatar) {
-            setUserMaya(prev => ({ ...prev, avatar: u.avatar, name: u.name || prev.name, nickname: u.nickname || prev.nickname }));
-            saveStorage('avatar_user_maya', u.avatar);
+          let permanent: string | null = null;
+          try { permanent = localStorage.getItem('akra_permanent_dp_user_maya'); } catch {}
+          const chosen = (permanent && !isDefaultStockAvatar(permanent))
+            ? permanent
+            : (u.avatar && !isDefaultStockAvatar(u.avatar) ? u.avatar : null);
+
+          if (chosen) {
+            setUserMaya(prev => ({ ...prev, avatar: chosen, name: u.name || prev.name, nickname: u.nickname || prev.nickname }));
+            saveStorage('avatar_user_maya', chosen);
+            try { localStorage.setItem('akra_permanent_dp_user_maya', chosen); } catch {}
           }
-          if (p?.avatar) {
+          if (p?.avatar && !isDefaultStockAvatar(p.avatar)) {
             setUserLeo(prev => ({ ...prev, avatar: p.avatar, name: p.name || prev.name, nickname: p.nickname || prev.nickname }));
             saveStorage('avatar_user_leo', p.avatar);
           }
@@ -1157,6 +1259,15 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const isLeo = activeUserId === 'user_leo';
     const targetKey = isLeo ? 'user_leo' : 'user_maya';
     const avatarKey = isLeo ? 'avatar_user_leo' : 'avatar_user_maya';
+    const permanentKey = isLeo ? 'akra_permanent_dp_user_leo' : 'akra_permanent_dp_user_maya';
+
+    if (updates.avatar && !isDefaultStockAvatar(updates.avatar)) {
+      try {
+        localStorage.setItem(permanentKey, updates.avatar);
+      } catch (e) {
+        console.warn('Could not save permanent DP key:', e);
+      }
+    }
 
     if (isLeo) {
       setUserLeo(prev => {
@@ -1172,6 +1283,19 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (updates.avatar) saveStorage(avatarKey, updates.avatar);
         return next;
       });
+    }
+
+    // Broadcast update to partner channel if open
+    if (broadcastChannelRef.current) {
+      try {
+        broadcastChannelRef.current.postMessage({
+          type: 'partner_profile_update',
+          userId: isLeo ? 'ragul_mama' : 'akshu_akshya',
+          avatar: updates.avatar,
+          name: updates.name,
+          nickname: updates.nickname,
+        });
+      } catch {}
     }
 
     // 1. Sync with backend API (updates in-memory + server database + broadcasts)

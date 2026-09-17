@@ -137,9 +137,9 @@ export const SettingsView: React.FC = () => {
       }
 
       await updateCurrentUserProfile({ avatar: finalUrl });
-      setDpPreview(finalUrl);
+      setDpPreview(null);
       setCroppingImage(null);
-      showToast('DP Saved ❤️', 'Your cropped display picture has been updated!', 'love');
+      showToast('DP Saved ❤️', 'Your cropped display picture has been saved permanently!', 'love');
     } catch (err) {
       console.error('Avatar save failed:', err);
       showToast('Save Failed', 'Could not save display picture.', 'info');
@@ -159,9 +159,13 @@ export const SettingsView: React.FC = () => {
     setDpPreview(null);
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateCurrentUserProfile({ nickname });
+    await updateCurrentUserProfile({
+      nickname,
+      ...(dpPreview ? { avatar: dpPreview } : {}),
+    });
+    setDpPreview(null);
     updateRelationship({
       anniversaryDate: anniversary,
       nextMeetingDate: nextMeeting,
