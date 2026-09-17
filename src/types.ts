@@ -28,6 +28,7 @@ export interface UserProfile {
   isOnline: boolean;
   lastSeen: string;
   statusMessage?: string;
+  bio?: string;
 }
 
 export interface ChatMessage {

@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useAkra } from '../context/AkraContext';
 import { VaultItem } from '../types';
 import { uploadToSupabaseStorage } from '../lib/storage';
+import { downloadImage } from '../utils/download';
 import {
   Lock,
   Unlock,
@@ -19,6 +20,7 @@ import {
   Loader2,
   KeyRound,
   Check,
+  Download,
 } from 'lucide-react';
 
 export const VaultView: React.FC = () => {
@@ -503,8 +505,21 @@ export const VaultView: React.FC = () => {
                     Confidential
                   </span>
 
-                  {/* Card Actions (Edit & Delete) */}
+                  {/* Card Actions (Download, Edit & Delete) */}
                   <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {item.mediaUrl && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          downloadImage(item.mediaUrl, `${item.title || 'vault-photo'}.jpg`);
+                          showToast('Downloading Photo 💾', 'Saving to your device...', 'love');
+                        }}
+                        className="p-1.5 rounded-full bg-[#1e130f]/80 text-[#d9a89e] hover:bg-[#3e241c] hover:text-[#f9efe8] transition cursor-pointer"
+                        title="Download secret photo"
+                      >
+                        <Download className="w-3 h-3" />
+                      </button>
+                    )}
                     <button
                       onClick={(e) => handleStartEdit(item, e)}
                       className="p-1.5 rounded-full bg-[#1e130f]/80 text-[#d9a89e] hover:bg-[#3e241c] transition"
@@ -547,6 +562,19 @@ export const VaultView: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#140c09]/90 backdrop-blur-xl animate-fade-up">
           <div className="relative max-w-3xl w-full rounded-[36px] bg-[#2d1b15] border border-[#7a5240]/40 p-6 sm:p-8 shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
             <div className="absolute top-5 right-5 flex items-center gap-2">
+              {viewingItem.mediaUrl && (
+                <button
+                  onClick={() => {
+                    downloadImage(viewingItem.mediaUrl, `${viewingItem.title || 'vault-photo'}.jpg`);
+                    showToast('Downloading Photo 💾', 'Saving to your device...', 'love');
+                  }}
+                  className="px-3 py-1.5 rounded-full bg-[#3e241c] text-[#d9a89e] hover:text-[#f9efe8] hover:bg-[#4a2e24] border border-[#7a5240]/40 transition cursor-pointer flex items-center gap-1.5 text-xs font-sans shadow-sm"
+                  title="Download photo"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Download</span>
+                </button>
+              )}
               <button
                 onClick={(e) => handleStartEdit(viewingItem, e)}
                 className="p-2 rounded-full text-[#d9a89e] hover:bg-[#3e241c] transition cursor-pointer"
@@ -578,7 +606,7 @@ export const VaultView: React.FC = () => {
               />
             </div>
 
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <span className="micro-label text-[9px] text-[#d9a89e]">Secret Frame</span>
                 <h2 className="font-serif text-2xl text-[#f9efe8] font-normal mt-0.5">
@@ -589,6 +617,19 @@ export const VaultView: React.FC = () => {
                 </p>
                 <p className="text-[10px] text-[#d9a89e]/60 font-mono mt-2">{viewingItem.date}</p>
               </div>
+
+              {viewingItem.mediaUrl && (
+                <button
+                  onClick={() => {
+                    downloadImage(viewingItem.mediaUrl, `${viewingItem.title || 'vault-photo'}.jpg`);
+                    showToast('Downloading Photo 💾', 'Saving to your device...', 'love');
+                  }}
+                  className="self-start sm:self-center px-4 py-2.5 rounded-full bg-[#d9a89e] text-[#241612] text-xs font-semibold hover:bg-[#e7c4bd] transition shadow-md flex items-center gap-2 cursor-pointer active:scale-95 shrink-0"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download Photo</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAkra } from '../context/AkraContext';
 import { Memory, FontChoice, FontSizeChoice } from '../types';
 import { uploadToSupabaseStorage } from '../lib/storage';
+import { downloadImage } from '../utils/download';
 import {
   Plus,
   MapPin,
@@ -20,6 +21,7 @@ import {
   AlertCircle,
   Tag,
   Loader2,
+  Download,
 } from 'lucide-react';
 
 export const MemoriesView: React.FC = () => {
@@ -356,14 +358,27 @@ export const MemoriesView: React.FC = () => {
                     <span />
                   )}
 
-                  {/* Edit Pencil Button (Opens Edit Modal Directly) */}
-                  <button
-                    onClick={(e) => handleOpenEdit(mem, e)}
-                    title="Edit name, caption, date & photo"
-                    className="p-2 rounded-full bg-[#f9efe8]/95 text-[#3e2723] hover:bg-[#ffffff] hover:scale-110 active:scale-95 transition shadow-md border border-[#7a5240]/20 cursor-pointer"
-                  >
-                    <Pencil className="w-3.5 h-3.5 text-[#3e2723]" />
-                  </button>
+                  {/* Action Buttons (Download & Edit) */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadImage(mem.imageUrl, `${mem.title || 'memory-frame'}.jpg`);
+                        showToast('Downloading Frame 💾', 'Saving memory picture to your device...', 'love');
+                      }}
+                      title="Download memory picture"
+                      className="p-2 rounded-full bg-[#f9efe8]/95 text-[#3e2723] hover:bg-[#ffffff] hover:scale-110 active:scale-95 transition shadow-md border border-[#7a5240]/20 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-[#3e2723]" />
+                    </button>
+                    <button
+                      onClick={(e) => handleOpenEdit(mem, e)}
+                      title="Edit name, caption, date & photo"
+                      className="p-2 rounded-full bg-[#f9efe8]/95 text-[#3e2723] hover:bg-[#ffffff] hover:scale-110 active:scale-95 transition shadow-md border border-[#7a5240]/20 cursor-pointer"
+                    >
+                      <Pencil className="w-3.5 h-3.5 text-[#3e2723]" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Bottom Overlay Prompt */}
@@ -400,13 +415,26 @@ export const MemoriesView: React.FC = () => {
                   <h3 className="font-serif text-lg sm:text-xl text-[#3e2723] font-bold leading-snug group-hover:text-[#1f100a] transition-colors">
                     {mem.title}
                   </h3>
-                  <button
-                    onClick={(e) => handleOpenEdit(mem, e)}
-                    className="opacity-60 group-hover:opacity-100 p-1 text-[#5b3a2e] hover:text-[#3e2723] transition"
-                    title="Edit name"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadImage(mem.imageUrl, `${mem.title || 'memory-frame'}.jpg`);
+                        showToast('Downloading Frame 💾', 'Saving picture to device...', 'love');
+                      }}
+                      className="opacity-60 group-hover:opacity-100 p-1 text-[#5b3a2e] hover:text-[#3e2723] transition"
+                      title="Download photo"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => handleOpenEdit(mem, e)}
+                      className="opacity-60 group-hover:opacity-100 p-1 text-[#5b3a2e] hover:text-[#3e2723] transition"
+                      title="Edit name"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 <p className="text-xs sm:text-sm text-[#5b3a2e] font-serif italic line-clamp-2 leading-relaxed">
@@ -433,16 +461,30 @@ export const MemoriesView: React.FC = () => {
       {selectedMemory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-[#1f100a]/85 backdrop-blur-xl animate-fade-up">
           <div className="relative max-w-4xl w-full glass-cream rounded-[36px] border border-[#7a5240]/30 shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[90vh]">
-            {/* Close Button */}
-            <button
-              onClick={() => {
-                setSelectedMemory(null);
-                setIsInlineEditingTitle(false);
-              }}
-              className="absolute top-4 right-4 z-20 p-2.5 rounded-full bg-[#f9efe8]/90 text-[#3e2723] hover:bg-[#ffffff] transition shadow-md cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {/* Top Right Actions */}
+            <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+              <button
+                onClick={() => {
+                  downloadImage(selectedMemory.imageUrl, `${selectedMemory.title || 'memory-frame'}.jpg`);
+                  showToast('Downloading Frame 💾', 'Saving memory picture...', 'love');
+                }}
+                className="p-2.5 rounded-full bg-[#f9efe8]/90 text-[#3e2723] hover:bg-[#ffffff] hover:scale-105 active:scale-95 transition shadow-md cursor-pointer flex items-center gap-1.5 text-xs font-semibold px-3"
+                title="Download photo"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">Download</span>
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedMemory(null);
+                  setIsInlineEditingTitle(false);
+                }}
+                className="p-2.5 rounded-full bg-[#f9efe8]/90 text-[#3e2723] hover:bg-[#ffffff] transition shadow-md cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
             {/* Left: Large Photo */}
             <div className="md:w-3/5 bg-[#170c07] flex items-center justify-center p-3 sm:p-5 overflow-hidden relative group">
@@ -451,20 +493,33 @@ export const MemoriesView: React.FC = () => {
                 alt={selectedMemory.title}
                 className="max-h-[55vh] md:max-h-[78vh] w-auto max-w-full object-contain rounded-2xl shadow-xl"
               />
-              <button
-                onClick={() => handleOpenEdit(selectedMemory)}
-                className="absolute bottom-4 right-4 px-3.5 py-1.5 rounded-full bg-[#f9efe8]/90 hover:bg-[#ffffff] text-xs font-semibold text-[#3e2723] shadow-lg flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                <span>Change Photo / Edit</span>
-              </button>
+              <div className="absolute bottom-4 right-4 flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    downloadImage(selectedMemory.imageUrl, `${selectedMemory.title || 'memory-frame'}.jpg`);
+                    showToast('Downloading Frame 💾', 'Saving memory picture...', 'love');
+                  }}
+                  className="px-3.5 py-1.5 rounded-full bg-[#f9efe8]/90 hover:bg-[#ffffff] text-xs font-semibold text-[#3e2723] shadow-lg flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+                  title="Download memory picture"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download</span>
+                </button>
+                <button
+                  onClick={() => handleOpenEdit(selectedMemory)}
+                  className="px-3.5 py-1.5 rounded-full bg-[#f9efe8]/90 hover:bg-[#ffffff] text-xs font-semibold text-[#3e2723] shadow-lg flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  <span>Change Photo / Edit</span>
+                </button>
+              </div>
             </div>
 
             {/* Right: Editorial Caption, Date, Reflections & Edit Controls */}
             <div className="md:w-2/5 p-6 sm:p-8 flex flex-col justify-between overflow-y-auto bg-[#f9efe8]/95">
               <div className="space-y-4">
-                {/* Location Stamp & Edit Frame Trigger */}
-                <div className="flex items-center justify-between">
+                {/* Location Stamp, Download & Edit Frame Trigger */}
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   {selectedMemory.location ? (
                     <div className="flex items-center gap-1.5 text-xs text-[#5b3a2e] font-mono font-medium">
                       <MapPin className="w-3.5 h-3.5 text-[#b06a5e]" />
@@ -474,13 +529,26 @@ export const MemoriesView: React.FC = () => {
                     <span />
                   )}
 
-                  <button
-                    onClick={() => handleOpenEdit(selectedMemory)}
-                    className="flex items-center gap-1 text-xs font-bold text-[#b06a5e] hover:text-[#3e2723] transition bg-[#ecd0c8]/60 hover:bg-[#ecd0c8] px-3 py-1 rounded-full cursor-pointer"
-                  >
-                    <Pencil className="w-3 h-3" />
-                    <span>Edit Details</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        downloadImage(selectedMemory.imageUrl, `${selectedMemory.title || 'memory-frame'}.jpg`);
+                        showToast('Downloading Frame 💾', 'Saving memory picture...', 'love');
+                      }}
+                      className="flex items-center gap-1 text-xs font-bold text-[#3e2723] hover:text-[#170c07] transition bg-[#ecd0c8]/60 hover:bg-[#ecd0c8] px-3 py-1 rounded-full cursor-pointer"
+                      title="Download memory picture"
+                    >
+                      <Download className="w-3 h-3 text-[#b06a5e]" />
+                      <span>Download</span>
+                    </button>
+                    <button
+                      onClick={() => handleOpenEdit(selectedMemory)}
+                      className="flex items-center gap-1 text-xs font-bold text-[#b06a5e] hover:text-[#3e2723] transition bg-[#ecd0c8]/60 hover:bg-[#ecd0c8] px-3 py-1 rounded-full cursor-pointer"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      <span>Edit Details</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Title (With Inline Quick-Rename Feature) */}

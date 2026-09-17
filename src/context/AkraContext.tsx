@@ -65,7 +65,7 @@ interface AkraContextType {
   userLeo: UserProfile;
   userMaya: UserProfile;
   switchActiveUser: () => void;
-  updateCurrentUserProfile: (updates: Partial<UserProfile>) => void;
+  updateCurrentUserProfile: (updates: Partial<UserProfile>) => Promise<void> | void;
   changeUserPassword: (userId: string, oldPass: string, newPass: string) => Promise<boolean>;
   
   // Relationship
@@ -203,8 +203,10 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Profiles (guaranteeing Ragul & Akshya names, nicknames and locations)
   const [userLeo, setUserLeo] = useState<UserProfile>(() => {
     const saved = loadStorage('user_leo', initialUserLeo);
+    const savedAvatar = loadStorage<string | null>('avatar_user_leo', null);
     return {
       ...saved,
+      avatar: savedAvatar || saved.avatar || initialUserLeo.avatar,
       name: 'Ragul',
       nickname: saved.nickname && saved.nickname.toLowerCase() === 'mama' ? 'Mama' : (saved.nickname || 'Mama'),
       city: 'Puducherry',
@@ -213,8 +215,10 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
   const [userMaya, setUserMaya] = useState<UserProfile>(() => {
     const saved = loadStorage('user_maya', initialUserMaya);
+    const savedAvatar = loadStorage<string | null>('avatar_user_maya', null);
     return {
       ...saved,
+      avatar: savedAvatar || saved.avatar || initialUserMaya.avatar,
       name: 'Akshya',
       nickname: saved.nickname && saved.nickname.toLowerCase() === 'akshu' ? 'Akshu' : (saved.nickname || 'Akshu'),
       city: 'Bangalore',
@@ -447,6 +451,29 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else {
           setUserMaya(prev => ({ ...prev, isOnline: !!data.isOnline }));
         }
+      } else if (type === 'partner_profile_update') {
+        const isLeo = data.userId === 'ragul_mama';
+        if (isLeo) {
+          setUserLeo(prev => ({
+            ...prev,
+            avatar: data.avatar || prev.avatar,
+            name: data.name || prev.name,
+            nickname: data.nickname || prev.nickname,
+            city: data.city || prev.city,
+            bio: data.bio || prev.bio,
+          }));
+          if (data.avatar) saveStorage('avatar_user_leo', data.avatar);
+        } else {
+          setUserMaya(prev => ({
+            ...prev,
+            avatar: data.avatar || prev.avatar,
+            name: data.name || prev.name,
+            nickname: data.nickname || prev.nickname,
+            city: data.city || prev.city,
+            bio: data.bio || prev.bio,
+          }));
+          if (data.avatar) saveStorage('avatar_user_maya', data.avatar);
+        }
       } else if (type === 'new_memory') {
         const author = data.uploadedByName || (data.creatorId === 'ragul_mama' ? 'Mama' : 'Akshu');
         const isSelf = (data.creatorId === 'ragul_mama' && activeUserId === 'user_leo') ||
@@ -539,24 +566,80 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
         metaNick === 'mama' ||
         metaName === 'ragul';
 
+      const metaAvatar = user.user_metadata?.avatar || user.user_metadata?.avatar_url;
+
       if (isMama) {
         setActiveUserId('user_leo');
-        setUserLeo(prev => ({
-          ...prev,
-          id: user.id,
-          email: user.email || prev.email,
-          name: user.user_metadata?.name || prev.name,
-          nickname: user.user_metadata?.nickname || prev.nickname,
-        }));
+        setUserLeo(prev => {
+          const nextAvatar = metaAvatar || loadStorage<string | null>('avatar_user_leo', null) || prev.avatar;
+          if (metaAvatar) saveStorage('avatar_user_leo', metaAvatar);
+          return {
+            ...prev,
+            id: user.id,
+            email: user.email || prev.email,
+            name: user.user_metadata?.name || prev.name,
+            nickname: user.user_metadata?.nickname || prev.nickname,
+            avatar: nextAvatar,
+          };
+        });
       } else {
         setActiveUserId('user_maya');
-        setUserMaya(prev => ({
-          ...prev,
-          id: user.id,
-          email: user.email || prev.email,
-          name: user.user_metadata?.name || prev.name,
-          nickname: user.user_metadata?.nickname || prev.nickname,
-        }));
+        setUserMaya(prev => {
+          const nextAvatar = metaAvatar || loadStorage<string | null>('avatar_user_maya', null) || prev.avatar;
+          if (metaAvatar) saveStorage('avatar_user_maya', nextAvatar);
+          return {
+            ...prev,
+            id: user.id,
+            email: user.email || prev.email,
+            name: user.user_metadata?.name || prev.name,
+            nickname: user.user_metadata?.nickname || prev.nickname,
+            avatar: nextAvatar,
+          };
+        });
+      }
+
+      // Fetch profiles directly from database to keep both avatars up-to-date across refreshes
+      if (isSupabaseConfigured) {
+        Promise.resolve(
+          supabase
+            .from('users')
+            .select('id, uid, email, name, nickname, avatar, city, bio')
+        )
+          .then(({ data: dbUsers, error: dbErr }) => {
+            if (!dbErr && dbUsers && dbUsers.length > 0) {
+              dbUsers.forEach((u: any) => {
+                const isUserMama =
+                  (u.email || '').toLowerCase() === 'ragultheking0007@gmail.com' ||
+                  u.uid === 'ragul_mama' ||
+                  (u.nickname || '').toLowerCase() === 'mama';
+
+                if (isUserMama) {
+                  setUserLeo(prev => ({
+                    ...prev,
+                    id: u.id || prev.id,
+                    name: u.name || prev.name,
+                    nickname: u.nickname || prev.nickname,
+                    avatar: u.avatar || prev.avatar,
+                    city: u.city || prev.city,
+                    bio: u.bio || prev.bio,
+                  }));
+                  if (u.avatar) saveStorage('avatar_user_leo', u.avatar);
+                } else {
+                  setUserMaya(prev => ({
+                    ...prev,
+                    id: u.id || prev.id,
+                    name: u.name || prev.name,
+                    nickname: u.nickname || prev.nickname,
+                    avatar: u.avatar || prev.avatar,
+                    city: u.city || prev.city,
+                    bio: u.bio || prev.bio,
+                  }));
+                  if (u.avatar) saveStorage('avatar_user_maya', u.avatar);
+                }
+              });
+            }
+          })
+          .catch(() => {});
       }
 
       if (session.access_token) {
@@ -611,6 +694,34 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Initial fetch from PostgreSQL backend
   useEffect(() => {
+    // Fetch profile & partner data from backend
+    api.getMe().then(res => {
+      if (res && res.user) {
+        const u = res.user;
+        const p = res.partner;
+        const isUserMama = u.uid === 'ragul_mama' || (u.email || '').toLowerCase() === 'ragultheking0007@gmail.com';
+        if (isUserMama) {
+          if (u.avatar) {
+            setUserLeo(prev => ({ ...prev, avatar: u.avatar, name: u.name || prev.name, nickname: u.nickname || prev.nickname }));
+            saveStorage('avatar_user_leo', u.avatar);
+          }
+          if (p?.avatar) {
+            setUserMaya(prev => ({ ...prev, avatar: p.avatar, name: p.name || prev.name, nickname: p.nickname || prev.nickname }));
+            saveStorage('avatar_user_maya', p.avatar);
+          }
+        } else {
+          if (u.avatar) {
+            setUserMaya(prev => ({ ...prev, avatar: u.avatar, name: u.name || prev.name, nickname: u.nickname || prev.nickname }));
+            saveStorage('avatar_user_maya', u.avatar);
+          }
+          if (p?.avatar) {
+            setUserLeo(prev => ({ ...prev, avatar: p.avatar, name: p.name || prev.name, nickname: p.nickname || prev.nickname }));
+            saveStorage('avatar_user_leo', p.avatar);
+          }
+        }
+      }
+    }).catch(() => {});
+
     // Fetch couple profile
     api.getCouple().then(couple => {
       if (couple) {
@@ -1042,13 +1153,71 @@ export const AkraProvider: React.FC<{ children: React.ReactNode }> = ({ children
     showToast('Switched Profile', `Now experiencing AKRA as ${nextName} ❤️`, 'info');
   };
 
-  const updateCurrentUserProfile = (updates: Partial<UserProfile>) => {
-    if (activeUserId === 'user_leo') {
-      setUserLeo(prev => ({ ...prev, ...updates }));
+  const updateCurrentUserProfile = async (updates: Partial<UserProfile>) => {
+    const isLeo = activeUserId === 'user_leo';
+    const targetKey = isLeo ? 'user_leo' : 'user_maya';
+    const avatarKey = isLeo ? 'avatar_user_leo' : 'avatar_user_maya';
+
+    if (isLeo) {
+      setUserLeo(prev => {
+        const next = { ...prev, ...updates };
+        saveStorage(targetKey, next);
+        if (updates.avatar) saveStorage(avatarKey, updates.avatar);
+        return next;
+      });
     } else {
-      setUserMaya(prev => ({ ...prev, ...updates }));
+      setUserMaya(prev => {
+        const next = { ...prev, ...updates };
+        saveStorage(targetKey, next);
+        if (updates.avatar) saveStorage(avatarKey, updates.avatar);
+        return next;
+      });
     }
-    showToast('Profile updated', 'Your changes have been saved.', 'info');
+
+    // 1. Sync with backend API (updates in-memory + server database + broadcasts)
+    api.updateProfile(updates).catch(err => {
+      console.warn('Failed to sync profile update with server:', err);
+    });
+
+    // 2. Supabase Auth user metadata update
+    if (isSupabaseConfigured) {
+      try {
+        const metaUpdates: Record<string, any> = {};
+        if (updates.avatar) {
+          metaUpdates.avatar = updates.avatar;
+          metaUpdates.avatar_url = updates.avatar;
+        }
+        if (updates.name) metaUpdates.name = updates.name;
+        if (updates.nickname) metaUpdates.nickname = updates.nickname;
+
+        await supabase.auth.updateUser({
+          data: metaUpdates,
+        });
+
+        // 3. Supabase users table direct update
+        const uid = isLeo ? 'ragul_mama' : 'akshu_akshya';
+        const email = isLeo ? 'ragultheking0007@gmail.com' : 'akshya@akra.love';
+        const currentId = isLeo ? userLeo.id : userMaya.id;
+
+        const dbUpdates: Record<string, any> = {
+          updated_at: new Date().toISOString(),
+        };
+        if (updates.avatar) dbUpdates.avatar = updates.avatar;
+        if (updates.name) dbUpdates.name = updates.name;
+        if (updates.nickname) dbUpdates.nickname = updates.nickname;
+        if (updates.city) dbUpdates.city = updates.city;
+        if (updates.bio) dbUpdates.bio = updates.bio;
+
+        if (currentId && currentId.includes('-')) {
+          await supabase.from('users').update(dbUpdates).eq('id', currentId);
+        }
+        await supabase.from('users').update(dbUpdates).or(`uid.eq.${uid},email.eq.${email}`);
+      } catch (sbErr) {
+        console.warn('Could not sync profile to Supabase:', sbErr);
+      }
+    }
+
+    showToast('Profile Updated ❤️', 'Your DP and profile are saved permanently.', 'love');
   };
 
   const updateRelationship = (updates: Partial<RelationshipInfo>) => {

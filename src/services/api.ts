@@ -61,6 +61,19 @@ export const api = {
     return apiFetch<{ user: any; partner: any; couple: any }>('/api/auth/me');
   },
 
+  updateProfile: async (updates: {
+    avatar?: string;
+    name?: string;
+    nickname?: string;
+    city?: string;
+    bio?: string;
+  }) => {
+    return apiFetch<{ success: boolean; user?: any }>('/api/auth/update-profile', {
+      method: 'POST',
+      body: JSON.stringify(updates),
+    });
+  },
+
   logout: async () => {
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' });

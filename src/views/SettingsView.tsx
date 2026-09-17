@@ -25,9 +25,11 @@ import {
   Type,
   Loader2,
   Database,
+  Crop,
 } from 'lucide-react';
 import { uploadToSupabaseStorage } from '../lib/storage';
 import { SupabaseSetupModal } from '../components/SupabaseSetupModal';
+import { AvatarCropperModal } from '../components/AvatarCropperModal';
 import { FontChoice, FontSizeChoice } from '../types';
 
 export const SettingsView: React.FC = () => {
@@ -91,9 +93,11 @@ export const SettingsView: React.FC = () => {
   const [soundEffects, setSoundEffects] = useState(true);
   const [isUploadingDp, setIsUploadingDp] = useState(false);
   const [showSupabaseModal, setShowSupabaseModal] = useState(false);
+  const [croppingImage, setCroppingImage] = useState<string | null>(null);
+  const [isSavingCropped, setIsSavingCropped] = useState(false);
 
-  // Handle DP selection from file or camera
-  const handleDpSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle DP selection from file or camera - opens crop/adjust modal
+  const handleDpSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -102,35 +106,53 @@ export const SettingsView: React.FC = () => {
       return;
     }
 
-    try {
-      setIsUploadingDp(true);
-      showToast('Uploading profile photo...', 'Saving avatar to akra-media bucket.', 'info');
-      const uploadRes = await uploadToSupabaseStorage(file, {
-        bucket: 'akra-media',
-        folder: 'avatars',
-        filename: `avatar-${currentUser.id}-${Date.now()}.jpg`,
-        caption: `${currentUser.name} profile photo`,
-        category: 'avatars',
-      });
+    const objectUrl = URL.createObjectURL(file);
+    setCroppingImage(objectUrl);
+    e.target.value = '';
+  };
 
-      if (uploadRes.url) {
-        setDpPreview(uploadRes.url);
-        showToast('Photo Ready', 'Click "Save as DP" to confirm your new photo.', 'love');
+  // Crop & save avatar directly to Supabase storage + user profile
+  const handleSaveCroppedAvatar = async (blob: Blob, dataUrl: string) => {
+    try {
+      setIsSavingCropped(true);
+      showToast('Saving Avatar...', 'Uploading cropped display picture...', 'info');
+
+      const filename = `avatar-${currentUser.id}-${Date.now()}.jpg`;
+      const file = new File([blob], filename, { type: 'image/jpeg' });
+
+      let finalUrl = dataUrl;
+      try {
+        const uploadRes = await uploadToSupabaseStorage(file, {
+          bucket: 'akra-media',
+          folder: 'avatars',
+          filename,
+          caption: `${currentUser.name} profile photo`,
+          category: 'avatars',
+        });
+        if (uploadRes.url) {
+          finalUrl = uploadRes.url;
+        }
+      } catch (uploadErr) {
+        console.warn('Supabase storage upload error, falling back to data URL:', uploadErr);
       }
+
+      await updateCurrentUserProfile({ avatar: finalUrl });
+      setDpPreview(finalUrl);
+      setCroppingImage(null);
+      showToast('DP Saved ❤️', 'Your cropped display picture has been updated!', 'love');
     } catch (err) {
-      console.error('Avatar upload failed:', err);
-      showToast('Upload Failed', 'Could not upload avatar.', 'info');
+      console.error('Avatar save failed:', err);
+      showToast('Save Failed', 'Could not save display picture.', 'info');
     } finally {
-      setIsUploadingDp(false);
-      e.target.value = '';
+      setIsSavingCropped(false);
     }
   };
 
-  const handleSaveDp = () => {
+  const handleSaveDp = async () => {
     if (!dpPreview) return;
-    updateCurrentUserProfile({ avatar: dpPreview });
+    await updateCurrentUserProfile({ avatar: dpPreview });
     setDpPreview(null);
-    showToast('DP Updated ❤️', 'Your new profile picture has been saved!', 'love');
+    showToast('DP Confirmed ❤️', 'Your new profile picture is active!', 'love');
   };
 
   const handleCancelDp = () => {
@@ -414,6 +436,16 @@ export const SettingsView: React.FC = () => {
                 >
                   {isUploadingDp ? <Loader2 className="w-3 h-3 animate-spin text-[#5D4037]" /> : <Upload className="w-3 h-3" />}
                   <span>{isUploadingDp ? 'Uploading...' : 'Choose Photo'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCroppingImage(dpPreview || currentUser.avatar)}
+                  className="px-3.5 py-1.5 rounded-full bg-[#FCEBF2] border border-[#F0C9D8] text-[11px] font-semibold text-[#5D4037] hover:bg-[#EFE5E0] transition flex items-center gap-1.5 shadow-2xs"
+                  title="Crop or reposition current DP"
+                >
+                  <Crop className="w-3 h-3" />
+                  <span>Crop / Adjust</span>
                 </button>
 
                 {dpPreview && (
@@ -783,6 +815,16 @@ export const SettingsView: React.FC = () => {
         isOpen={showSupabaseModal}
         onClose={() => setShowSupabaseModal(false)}
       />
+
+      {/* Avatar Crop & Adjust Modal */}
+      {croppingImage && (
+        <AvatarCropperModal
+          imageSrc={croppingImage}
+          isSaving={isSavingCropped}
+          onCancel={() => setCroppingImage(null)}
+          onSave={handleSaveCroppedAvatar}
+        />
+      )}
     </div>
   );
 };

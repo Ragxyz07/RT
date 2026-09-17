@@ -280,6 +280,55 @@ apiRouter.get('/auth/me', requireAuth, async (req: AuthRequest, res: Response) =
   }
 });
 
+// Update Profile (Avatar, Name, Nickname, City, Bio)
+apiRouter.post('/auth/update-profile', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const uid = req.user!.uid;
+    const { avatar, name, nickname, city, bio } = req.body;
+
+    const userIndex = memUsers.findIndex((u) => u.uid === uid);
+    if (userIndex !== -1) {
+      if (avatar) memUsers[userIndex].avatar = avatar;
+      if (name) memUsers[userIndex].name = name;
+      if (nickname) memUsers[userIndex].nickname = nickname;
+      if (city) memUsers[userIndex].city = city;
+      if (bio) memUsers[userIndex].bio = bio;
+    }
+
+    if (isServerSupabaseConfigured) {
+      const updates: any = { updated_at: new Date().toISOString() };
+      if (avatar) updates.avatar = avatar;
+      if (name) updates.name = name;
+      if (nickname) updates.nickname = nickname;
+      if (city) updates.city = city;
+      if (bio) updates.bio = bio;
+
+      await serverSupabase
+        .from('users')
+        .update(updates)
+        .eq('uid', uid);
+    }
+
+    // Broadcast to partner in real time
+    broadcastToCouple('couple_akra_1', 'partner_profile_update', {
+      userId: uid,
+      avatar,
+      name,
+      nickname,
+      city,
+      bio,
+    });
+
+    res.json({
+      success: true,
+      user: userIndex !== -1 ? memUsers[userIndex] : null,
+    });
+  } catch (error: any) {
+    console.error('Error updating profile:', error);
+    res.status(500).json({ error: error?.message || 'Failed to update profile' });
+  }
+});
+
 // Logout
 apiRouter.post('/auth/logout', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
