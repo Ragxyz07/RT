@@ -24,11 +24,9 @@ import {
   CheckCircle2,
   Type,
   Loader2,
-  Database,
   Crop,
 } from 'lucide-react';
 import { uploadToSupabaseStorage } from '../lib/storage';
-import { SupabaseSetupModal } from '../components/SupabaseSetupModal';
 import { AvatarCropperModal } from '../components/AvatarCropperModal';
 import { FontChoice, FontSizeChoice } from '../types';
 
@@ -92,7 +90,6 @@ export const SettingsView: React.FC = () => {
   // Sound effects toggle
   const [soundEffects, setSoundEffects] = useState(true);
   const [isUploadingDp, setIsUploadingDp] = useState(false);
-  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
   const [croppingImage, setCroppingImage] = useState<string | null>(null);
   const [isSavingCropped, setIsSavingCropped] = useState(false);
 
@@ -761,34 +758,6 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Supabase Database & Storage Assistant */}
-      <div className="bg-[#FFF0F5] rounded-[32px] p-6 sm:p-8 border border-[#F0C9D8] shadow-2xs space-y-5">
-        <div className="flex items-center justify-between pb-3 border-b border-[#F0C9D8]">
-          <div className="flex items-center gap-2">
-            <Database className="w-4 h-4 text-[#5D4037]" />
-            <h2 className="font-serif font-bold text-base text-[#3E2723]">Supabase Database & Storage Setup</h2>
-          </div>
-          <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-[#EFE5E0] text-[#5D4037] font-semibold">
-            Connected: pbenavjftzphpymvkktj
-          </span>
-        </div>
-
-        <p className="text-xs text-[#795548] leading-relaxed">
-          Need to initialize or verify missing database tables (<code>users</code>, <code>vault_items</code>, <code>letters</code>, <code>memories</code>, <code>messages</code>, <code>timeline_events</code>, <code>media</code>) or storage buckets (<code>akra-vault</code>, <code>akra-photobooth</code>, <code>akra-media</code>)? Open our step-by-step checklist and copy-paste ready SQL scripts.
-        </p>
-
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => setShowSupabaseModal(true)}
-            className="px-5 py-2.5 rounded-full bg-[#5D4037] text-white text-xs font-semibold hover:bg-[#4E342E] transition flex items-center gap-2 shadow-xs cursor-pointer"
-          >
-            <Database className="w-3.5 h-3.5" />
-            <span>Open Database Initialization & SQL Helper</span>
-          </button>
-        </div>
-      </div>
-
       {/* Archive Export & Account Space */}
       <div className="bg-[#FFF0F5] rounded-[32px] p-6 sm:p-8 border border-[#F0C9D8] shadow-2xs space-y-5">
         <div className="flex items-center gap-2 pb-3 border-b border-[#F0C9D8]">
@@ -819,12 +788,6 @@ export const SettingsView: React.FC = () => {
           </button>
         </div>
       </div>
-
-      {/* Supabase Setup Modal */}
-      <SupabaseSetupModal
-        isOpen={showSupabaseModal}
-        onClose={() => setShowSupabaseModal(false)}
-      />
 
       {/* Avatar Crop & Adjust Modal */}
       {croppingImage && (
